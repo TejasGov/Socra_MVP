@@ -18,12 +18,18 @@ import { embedResourceVersion } from "../../../worker/jobs/embeddings";
 const AGGREGATE_EVERY_S = 60;
 const EMBED_EVERY_S = 300;
 
+// Per-instance fallback when Redis is unavailable (throttling is then per serverless instance, which is acceptable).
+const localThrottle = new Map<string, number>();
+
 async function claimThrottle(key: string, seconds: number): Promise<boolean> {
   try {
     const ok = await getRedis().set(`inline-jobs:${key}`, "1", "EX", seconds, "NX");
     return ok === "OK";
   } catch {
-    return false;
+    const now = Date.now();
+    if ((localThrottle.get(key) ?? 0) > now) return false;
+    localThrottle.set(key, now + seconds * 1000);
+    return true;
   }
 }
 

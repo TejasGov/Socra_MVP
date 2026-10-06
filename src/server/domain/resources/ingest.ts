@@ -176,7 +176,8 @@ export async function ingestResource(
   });
 
   let embeddingsQueued = false;
-  if (!env().AI_MOCK_MODE) {
+  // With INLINE_JOBS (serverless, no worker) missing chunk embeddings are filled by the inline job runner instead.
+  if (!env().AI_MOCK_MODE && !env().INLINE_JOBS) {
     try {
       await getQueue(QUEUE_NAMES.embeddings).add(
         "embed-resource",

@@ -1,0 +1,13 @@
+# Never upload local secrets or tooling output with the source.
+.env
+.env.*
+!.env.example
+.playwright-mcp
+test-results
+playwright-report
+storage
+worker-dist
+.next
+node_modules
+.agents
+.claude
