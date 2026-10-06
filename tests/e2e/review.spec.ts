@@ -40,7 +40,10 @@ test.describe("post-assessment review", () => {
 
     const student = await signedIn(USERS.student);
     await student.goto(`/courses/${row!.courseId}`);
-    await student.locator("#main").getByRole("link", { name: /HW3: Recursion/ }).click();
+    await student
+      .locator("#main")
+      .getByRole("link", { name: /HW3: Recursion/ })
+      .click();
     await expect(student).toHaveURL(/\/courses\/[^/]+\/assignments\/[^/]+$/);
     await expectReviewModeWithCode(student);
   });

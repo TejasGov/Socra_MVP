@@ -25,6 +25,34 @@ export default async function globalTeardown(): Promise<number> {
       data: { state: "ARCHIVED", archivedAt: new Date() },
     });
     if (res.count > 0) console.log(`E2E teardown: archived ${res.count} E2E assignment(s).`);
+    // Reset the dedicated E2E students (28-30) so reruns always have attempts. Submission cascades
+    // to SubmissionAnswer/Grade/GradeOverrideAudit; CodeRun.submissionId is SetNull. Append-only
+    // tables (AnalyticsEvent, LearningEvidence, AuditLog, HeldOutEvalItem) are never touched.
+    const e2eStudents = {
+      email: { in: ["student28", "student29", "student30"].map((s) => `${s}@socra.local`) },
+    };
+    const courses = { course: { code: { in: ["CSE 115", "CSE 116"] } } };
+    const subs = await prisma.submission.deleteMany({
+      where: { user: e2eStudents, assignment: courses },
+    });
+    const drafts = await prisma.draft.deleteMany({
+      where: { user: e2eStudents, assignment: courses },
+    });
+    await prisma.assignmentProgress.updateMany({
+      where: { user: e2eStudents, assignment: courses },
+      data: {
+        attemptsUsed: 0,
+        latestSubmissionId: null,
+        submittedAt: null,
+        returnedAt: null,
+        status: "NOT_STARTED",
+      },
+    });
+    if (subs.count + drafts.count > 0) {
+      console.log(
+        `E2E teardown: removed ${subs.count} submission(s) and ${drafts.count} draft(s) for student28-30.`,
+      );
+    }
     return res.count;
   } finally {
     await prisma.$disconnect();

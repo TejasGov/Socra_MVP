@@ -110,6 +110,8 @@ export interface SocraPanelProps {
   active?: boolean;
   /** False when Socra is turned off for this course. */
   available?: boolean;
+  /** Question type (CODING, SHORT_ANSWER, ESSAY, MULTIPLE_CHOICE); drives non-code copy. */
+  questionType?: string;
   /** Optional label shown above the log, e.g. the question title. */
   scopeLabel?: string;
   className?: string;
@@ -123,8 +125,10 @@ export function SocraPanel({
   active = true,
   available = true,
   scopeLabel,
+  questionType,
   className = "",
 }: SocraPanelProps) {
+  const isCodeQuestion = !questionType || questionType === "CODING";
   const copy = MODE_COPY[mode];
   const inputId = useId();
   const helpId = useId();
@@ -141,6 +145,7 @@ export function SocraPanel({
   const [lastFailedContent, setLastFailedContent] = useState<string | null>(null);
   const [limitReached, setLimitReached] = useState(false);
   const [policySummary, setPolicySummary] = useState<string | null>(null);
+  const [levelCap, setLevelCap] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const reqKey = JSON.stringify(sessionRequest);
@@ -150,13 +155,15 @@ export function SocraPanel({
   const createSession = useCallback((): Promise<string | null> => {
     if (creatingRef.current) return creatingRef.current;
     const p = (async () => {
-      const res = await apiJson<{ sessionId: string; mode?: string; policySummary?: string }>(
-        "/api/socra/sessions",
-        {
-          method: "POST",
-          body: mode === "PRACTICE" ? { ...JSON.parse(reqKey), mode } : JSON.parse(reqKey),
-        },
-      );
+      const res = await apiJson<{
+        sessionId: string;
+        mode?: string;
+        policySummary?: string;
+        maxInterventionLevel?: number | null;
+      }>("/api/socra/sessions", {
+        method: "POST",
+        body: mode === "PRACTICE" ? { ...JSON.parse(reqKey), mode } : JSON.parse(reqKey),
+      });
       if (!res.ok || !res.data?.sessionId) {
         setSessionState("failed");
         if (isLimitCode(res.ok ? "" : res.error.code)) setLimitReached(true);
@@ -165,6 +172,9 @@ export function SocraPanel({
       }
       setSessionId(res.data.sessionId);
       setPolicySummary(res.data.policySummary ?? null);
+      setLevelCap(
+        typeof res.data.maxInterventionLevel === "number" ? res.data.maxInterventionLevel : null,
+      );
       setSessionState("ready");
       setFailure(null);
       const hist = await apiJson<unknown>(
@@ -312,9 +322,6 @@ export function SocraPanel({
   }, [sessionId, lastFailedContent, send, createSession]);
 
   const assistantLevels = turns.filter((t) => t.role === "assistant" && t.level !== null);
-  const currentLevel = assistantLevels.length
-    ? (assistantLevels[assistantLevels.length - 1]!.level as number)
-    : null;
   const maxLevel = assistantLevels.reduce<number | null>(
     (m, t) => (m === null || (t.level as number) > m ? (t.level as number) : m),
     null,
@@ -337,9 +344,9 @@ export function SocraPanel({
           Socra <span className="text-fg-muted font-normal">· {copy.name}</span>
         </h2>
         <p className="text-fg-muted mt-1 text-xs">{policySummary ?? copy.statement}</p>
-        {mode !== "PRACTICE" ? (
+        {mode === "PROTECTED_ASSESSMENT" && levelCap !== null ? (
           <div className="mt-2">
-            <GuidanceDepth current={currentLevel} max={maxLevel} />
+            <GuidanceDepth deepest={maxLevel} cap={levelCap} />
           </div>
         ) : null}
       </header>
@@ -364,7 +371,9 @@ export function SocraPanel({
                 ? "Ask Socra to walk through the solution, explain a line, or compare it with your submission."
                 : mode === "PRACTICE"
                   ? "Ask about the current question, or ask for a worked example of the concept."
-                  : "Describe what you expect your code to do and where it differs. Socra reads your current code with each message, so you don't need to paste it."}
+                  : !isCodeQuestion
+                    ? "Say which option you are unsure about and why, or explain your reasoning so far."
+                    : "Describe what you expect your code to do and where it differs. Socra reads your current code with each message, so you don't need to paste it."}
           </p>
         ) : (
           turns.map((turn, i) =>
@@ -405,7 +414,9 @@ export function SocraPanel({
                   </p>
                 ) : null}
                 {turn.content ? (
-                  <Markdown noCopyCode={mode === "PROTECTED_ASSESSMENT"}>{turn.content}</Markdown>
+                  <Markdown noCopyCode={mode === "PROTECTED_ASSESSMENT"} breaks>
+                    {turn.content}
+                  </Markdown>
                 ) : turn.state === "streaming" ? (
                   <p className="text-fg-muted text-sm">Socra is reading your work…</p>
                 ) : null}
@@ -489,20 +500,17 @@ export function SocraPanel({
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                 e.preventDefault();
                 void send(draft);
-              } else if (e.key === "Enter" && e.shiftKey && (e.ctrlKey || e.metaKey)) {
-                e.preventDefault();
-                void send(draft);
               }
             }}
             rows={3}
             disabled={!available || limitReached}
             placeholder={copy.placeholder}
             aria-describedby={helpId}
-            className="border-border-strong bg-surface text-fg placeholder:text-fg-subtle disabled:bg-surface-2 block w-full resize-y rounded-sm border px-2.5 py-2 text-sm"
+            className="border-border-input bg-surface text-fg placeholder:text-fg-subtle disabled:bg-surface-2 block w-full resize-y rounded-sm border px-2.5 py-2 text-sm"
           />
           <div className="mt-2 flex items-center justify-between gap-2">
             <p id={helpId} className="text-fg-subtle text-xs">
-              Enter or Ctrl+Shift+Enter sends. Shift+Enter adds a line.
+              Enter sends. Shift+Enter adds a line.
             </p>
             {streaming ? (
               <button
@@ -537,5 +545,6 @@ export function SocraPanel({
 
 function joinList(items: string[]): string {
   if (items.length <= 1) return items.join("");
+  if (items.length === 2) return items.join(" and ");
   return `${items.slice(0, -1).join(", ")}, and ${items[items.length - 1]}`;
 }

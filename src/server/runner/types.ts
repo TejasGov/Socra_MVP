@@ -135,11 +135,47 @@ export interface CodeRunner {
   health(): Promise<RunnerHealth>;
 }
 
-/** Strip everything a student must not see: hidden/diagnostic results and their messages. */
-export function toStudentRunResult(result: RunResult): RunResult {
+/**
+ * Remove sandbox-harness frames from error text: traceback frames that point into /opt/socra/ (with
+ * their source and caret lines) and any line mentioning the harness's spec_in. Only frames from the
+ * student's own file remain, so neither the student nor Socra sees harness internals.
+ */
+export function scrubHarnessText(text: string): string {
+  if (!text || !/\/opt\/socra\/|spec_in/.test(text)) return text;
+  const out: string[] = [];
+  let skipping = false;
+  for (const line of text.split("\n")) {
+    if (/\/opt\/socra\//.test(line)) {
+      skipping = true;
+      continue;
+    }
+    if (skipping && /^\s{4,}\S/.test(line)) continue;
+    skipping = false;
+    if (/spec_in/.test(line)) continue;
+    out.push(line);
+  }
+  return out.join("\n");
+}
+
+/** Scrub harness frames from stderr and every test's actual/message. */
+export function scrubHarnessOutput(result: RunResult): RunResult {
   return {
     ...result,
-    testResults: result.testResults.filter((t) => t.visibility === "PUBLIC").map((t) => ({ ...t })),
+    stderr: scrubHarnessText(result.stderr),
+    testResults: result.testResults.map((t) => ({
+      ...t,
+      ...(t.actual !== undefined ? { actual: scrubHarnessText(t.actual) } : {}),
+      ...(t.message !== undefined ? { message: scrubHarnessText(t.message) } : {}),
+    })),
+  };
+}
+
+/** Strip everything a student must not see: hidden/diagnostic results and their messages. */
+export function toStudentRunResult(result: RunResult): RunResult {
+  const clean = scrubHarnessOutput(result);
+  return {
+    ...clean,
+    testResults: clean.testResults.filter((t) => t.visibility === "PUBLIC").map((t) => ({ ...t })),
   };
 }
 

@@ -9,7 +9,7 @@ import { testCaseToSpec } from "@/server/domain/assignments/test-mapping";
 import { visibleToStudents } from "@/server/domain/assignments/state-machine";
 import { recordCodeRun } from "@/server/domain/workspace/runs";
 import { executeRun } from "@/server/runner/service";
-import { toStudentRunResult } from "@/server/runner/types";
+import { scrubHarnessOutput, toStudentRunResult } from "@/server/runner/types";
 
 export const dynamic = "force-dynamic";
 
@@ -67,7 +67,8 @@ export const POST = route(async (req) => {
     throw new HttpError(404, "assignment_not_found", "Assignment not found");
   }
   const language = question.currentVersion?.language ?? question.assignment.language;
-  if (!language) throw new HttpError(400, "no_language", "This question has no programming language");
+  if (!language)
+    throw new HttpError(400, "no_language", "This question has no programming language");
 
   const rl = await rateLimit(`runs:${user.id}`, RUNS_PER_MINUTE, 60_000);
   if (!rl.allowed) {
@@ -88,14 +89,17 @@ export const POST = route(async (req) => {
   }
 
   const runId = randomUUID();
-  const result = await executeRun({
-    runId,
-    language,
-    code: input.code,
-    stdin: input.stdin,
-    tests,
-    kind: input.kind,
-  });
+  // Scrub harness frames before storing, so Socra's view of the latest run is clean too.
+  const result = scrubHarnessOutput(
+    await executeRun({
+      runId,
+      language,
+      code: input.code,
+      stdin: input.stdin,
+      tests,
+      kind: input.kind,
+    }),
+  );
   await recordCodeRun(
     user,
     {

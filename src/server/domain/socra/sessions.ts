@@ -79,7 +79,10 @@ export interface SocraAvailability {
   directHelp: boolean;
 }
 
-async function researchConditionFor(userId: string, courseId: string): Promise<StudyCondition | null> {
+async function researchConditionFor(
+  userId: string,
+  courseId: string,
+): Promise<StudyCondition | null> {
   const p = await prisma.studyParticipant.findUnique({
     where: { userId_courseId: { userId, courseId } },
     select: { condition: true, withdrawnAt: true },
@@ -111,8 +114,19 @@ export async function getSocraAvailability(
     if (!ps || ps.userId !== user.id) return no("practice_session_not_found");
     assertCan(user, "socra:use", { courseId: ps.courseId });
     const condition = await researchConditionFor(user.id, ps.courseId);
-    if (condition === "CONTROL") return no("research_condition_control", { courseId: ps.courseId, researchCondition: condition });
-    return { available: true, reason: null, mode: "PRACTICE", courseId: ps.courseId, researchCondition: condition, directHelp: true };
+    if (condition === "CONTROL")
+      return no("research_condition_control", {
+        courseId: ps.courseId,
+        researchCondition: condition,
+      });
+    return {
+      available: true,
+      reason: null,
+      mode: "PRACTICE",
+      courseId: ps.courseId,
+      researchCondition: condition,
+      directHelp: true,
+    };
   }
   if (!target.assignmentId) return no("no_activity");
   const a = await prisma.assignment.findUnique({
@@ -121,14 +135,22 @@ export async function getSocraAvailability(
   });
   if (!a) return no("assignment_not_found");
   assertCan(user, "socra:use", { courseId: a.courseId });
-  if (a.state === "DRAFT" || a.state === "SCHEDULED") return no("assignment_not_open", { courseId: a.courseId });
+  if (a.state === "DRAFT" || a.state === "SCHEDULED")
+    return no("assignment_not_open", { courseId: a.courseId });
   const condition = await researchConditionFor(user.id, a.courseId);
-  if (condition === "CONTROL") return no("research_condition_control", { courseId: a.courseId, researchCondition: condition });
+  if (condition === "CONTROL")
+    return no("research_condition_control", { courseId: a.courseId, researchCondition: condition });
   let mode: StudentAiMode = await getEffectiveAiMode(user.id, target.assignmentId);
-  if (mode === "POST_ASSESSMENT_REVIEW" && !(await isEnabled("postAssessmentSolutions", { courseId: a.courseId }))) {
+  if (
+    mode === "POST_ASSESSMENT_REVIEW" &&
+    !(await isEnabled("postAssessmentSolutions", { courseId: a.courseId }))
+  ) {
     mode = "PROTECTED_ASSESSMENT";
   }
-  if (mode === "PROTECTED_ASSESSMENT" && !(await isEnabled("protectedSocra", { courseId: a.courseId }))) {
+  if (
+    mode === "PROTECTED_ASSESSMENT" &&
+    !(await isEnabled("protectedSocra", { courseId: a.courseId }))
+  ) {
     return no("flag_protected_socra_off", { courseId: a.courseId, researchCondition: condition });
   }
   return {
@@ -141,12 +163,23 @@ export async function getSocraAvailability(
   };
 }
 
-export function policySummaryFor(mode: StudentAiMode, directHelp: boolean): string {
-  if (mode === "PRACTICE") return "Practice mode: Socra can explain answers and worked examples directly.";
+export function policySummaryFor(
+  mode: StudentAiMode,
+  directHelp: boolean,
+  questionType?: string | null,
+): string {
+  const isCode = !questionType || questionType === "CODING";
+  if (mode === "PRACTICE") return "Socra can explain answers and worked examples directly.";
   if (mode === "POST_ASSESSMENT_REVIEW") {
     return "This assignment is closed and solutions are released. Socra can explain the full solution and compare it with your work.";
   }
-  if (directHelp) return "Socra can see your code, latest run and the assignment, and can help directly on this activity.";
+  if (!isCode) {
+    return directHelp
+      ? "Socra can see the question and your current answer, and can help directly on this activity."
+      : "Socra sees the question and your current answer. It asks questions and gives hints but will not choose or write the answer for you.";
+  }
+  if (directHelp)
+    return "Socra can see your code, latest run and the assignment, and can help directly on this activity.";
   return "Socra sees your code, your latest run, public test results and the assignment. It guides you with questions and hints but will not write the solution or reveal hidden tests.";
 }
 
@@ -164,7 +197,14 @@ export interface CreateSessionInput {
 export async function createSocraSession(
   user: CurrentUser,
   input: CreateSessionInput,
-): Promise<{ sessionId: string; mode: StudentAiMode; policySummary: string; created: boolean }> {
+): Promise<{
+  sessionId: string;
+  mode: StudentAiMode;
+  policySummary: string;
+  created: boolean;
+  /** The assignment policy's hint cap (deepest level Socra may reach); null outside assignments. */
+  maxInterventionLevel: number | null;
+}> {
   const availability = await getSocraAvailability(user, input);
   if (!availability.available || !availability.mode || !availability.courseId) {
     throw new SocraUnavailableError(availability.reason ?? "unavailable");
@@ -175,13 +215,20 @@ export async function createSocraSession(
   let assignmentVersion: number | null = null;
   let policyVersion: number | null = null;
   let questionId: string | null = input.questionId ?? null;
+  let questionType: string | null = null;
+  let maxInterventionLevel: number | null = null;
   if (input.assignmentId && !input.practiceSessionId) {
     const a = await prisma.assignment.findUnique({
       where: { id: input.assignmentId },
       select: {
         currentVersion: { select: { version: true, policyVersionId: true } },
-        socraPolicy: { select: { currentVersion: { select: { version: true } } } },
-        questions: { orderBy: { order: "asc" }, select: { id: true } },
+        socraPolicy: {
+          select: { currentVersionId: true, currentVersion: { select: { version: true } } },
+        },
+        questions: {
+          orderBy: { order: "asc" },
+          select: { id: true, currentVersion: { select: { type: true } } },
+        },
       },
     });
     assignmentVersion = a?.currentVersion?.version ?? null;
@@ -193,16 +240,31 @@ export async function createSocraSession(
       });
       policyVersion = pv?.version ?? policyVersion;
     }
+    const capPvId = a?.currentVersion?.policyVersionId ?? a?.socraPolicy?.currentVersionId ?? null;
+    if (capPvId) {
+      const cap = await prisma.socraPolicyVersion.findUnique({
+        where: { id: capPvId },
+        select: { maxInterventionLevel: true },
+      });
+      maxInterventionLevel = cap?.maxInterventionLevel ?? null;
+    }
     if (questionId && !a?.questions.some((q) => q.id === questionId)) {
       throw new HttpError(404, "question_not_found", "Question not found");
     }
     questionId = questionId ?? a?.questions[0]?.id ?? null;
+    questionType = a?.questions.find((q) => q.id === questionId)?.currentVersion?.type ?? null;
   }
 
   const existing = await prisma.aiSession.findFirst({
     where: input.practiceSessionId
       ? { practiceSessionId: input.practiceSessionId, userId: user.id }
-      : { userId: user.id, assignmentId: input.assignmentId ?? null, questionId, mode, status: { in: ["ACTIVE", "LIMIT_REACHED", "ESCALATED"] } },
+      : {
+          userId: user.id,
+          assignmentId: input.assignmentId ?? null,
+          questionId,
+          mode,
+          status: { in: ["ACTIVE", "LIMIT_REACHED", "ESCALATED"] },
+        },
     orderBy: { startedAt: "desc" },
     select: { id: true, mode: true },
   });
@@ -210,7 +272,13 @@ export async function createSocraSession(
     if (existing.mode !== mode) {
       await prisma.aiSession.update({ where: { id: existing.id }, data: { mode } });
     }
-    return { sessionId: existing.id, mode, policySummary: policySummaryFor(mode, availability.directHelp), created: false };
+    return {
+      sessionId: existing.id,
+      mode,
+      policySummary: policySummaryFor(mode, availability.directHelp, questionType),
+      created: false,
+      maxInterventionLevel,
+    };
   }
 
   const session = await prisma.$transaction(async (tx) => {
@@ -242,7 +310,13 @@ export async function createSocraSession(
     });
     return s;
   });
-  return { sessionId: session.id, mode, policySummary: policySummaryFor(mode, availability.directHelp), created: true };
+  return {
+    sessionId: session.id,
+    mode,
+    policySummary: policySummaryFor(mode, availability.directHelp, questionType),
+    created: true,
+    maxInterventionLevel,
+  };
 }
 
 /** Student's own session with USER/ASSISTANT messages. 404 for anyone else (no enumeration). */
@@ -265,11 +339,19 @@ export async function getOwnSocraSession(user: CurrentUser, sessionId: string) {
       messages: {
         where: { role: { in: ["USER", "ASSISTANT"] } },
         orderBy: { createdAt: "asc" },
-        select: { id: true, role: true, content: true, interventionLevel: true, metadata: true, createdAt: true },
+        select: {
+          id: true,
+          role: true,
+          content: true,
+          interventionLevel: true,
+          metadata: true,
+          createdAt: true,
+        },
       },
     },
   });
-  if (!s || s.userId !== user.id) throw new HttpError(404, "session_not_found", "Session not found");
+  if (!s || s.userId !== user.id)
+    throw new HttpError(404, "session_not_found", "Session not found");
   assertCan(user, "socra:history:read_own", { ownerId: s.userId, courseId: s.courseId });
   const messages = s.messages.map((m) => {
     const meta = (m.metadata ?? {}) as Record<string, unknown>;
@@ -314,7 +396,12 @@ interface TurnContext {
 
 async function loadTurnContext(
   user: CurrentUser,
-  session: { courseId: string; assignmentId: string | null; questionId: string | null; practiceSessionId: string | null },
+  session: {
+    courseId: string;
+    assignmentId: string | null;
+    questionId: string | null;
+    practiceSessionId: string | null;
+  },
   input: SendMessageInput,
 ): Promise<TurnContext> {
   const liveWorkspace = (base: WorkspaceContext | null): WorkspaceContext | null => {
@@ -329,7 +416,11 @@ async function loadTurnContext(
   };
 
   if (session.assignmentId) {
-    const ctx = await getWorkspaceContextForAi(user.id, session.assignmentId, session.questionId ?? undefined);
+    const ctx = await getWorkspaceContextForAi(
+      user.id,
+      session.assignmentId,
+      session.questionId ?? undefined,
+    );
     const a = await prisma.assignment.findUnique({
       where: { id: session.assignmentId },
       select: {
@@ -364,7 +455,10 @@ async function loadTurnContext(
       allowedResourceIds,
       topicTags: ctx.assignment.topicTags,
       learnerContext: null,
-      policyMaxTurns: { perSession: pv?.maxTurnsPerSession ?? null, perDay: pv?.maxTurnsPerDay ?? null },
+      policyMaxTurns: {
+        perSession: pv?.maxTurnsPerSession ?? null,
+        perDay: pv?.maxTurnsPerDay ?? null,
+      },
     };
   }
 
@@ -380,7 +474,19 @@ async function loadTurnContext(
         attempts: {
           orderBy: { shownAt: "desc" },
           take: 1,
-          select: { answer: true, item: { select: { id: true, prompt: true, answer: true, explanation: true, starterCode: true, topic: { select: { name: true } } } } },
+          select: {
+            answer: true,
+            item: {
+              select: {
+                id: true,
+                prompt: true,
+                answer: true,
+                explanation: true,
+                starterCode: true,
+                topic: { select: { name: true } },
+              },
+            },
+          },
         },
       },
     });
@@ -484,12 +590,22 @@ interface ProtectedOutcome {
   fallback: boolean;
 }
 
-export async function runProtectedTurn(envelope: AiRequestEnvelope, directHelp: boolean): Promise<ProtectedOutcome | { error: string; aiRequestId: string }> {
+export async function runProtectedTurn(
+  envelope: AiRequestEnvelope,
+  directHelp: boolean,
+): Promise<ProtectedOutcome | { error: string; aiRequestId: string }> {
   const first = await runAi(envelope, { task: "socratic_turn", schema: protectedTurnSchema });
   if (!first.ok) {
     if (first.errorClass === "INVALID_OUTPUT") {
       await updateAiRequestStatus(first.aiRequestId, "FALLBACK", { fallbackUsed: true });
-      return { reply: safeFallbackReply("invalid_output"), turn: null, aiRequestId: first.aiRequestId, policyOutcome: null, decisionIds: [], fallback: true };
+      return {
+        reply: safeFallbackReply("invalid_output"),
+        turn: null,
+        aiRequestId: first.aiRequestId,
+        policyOutcome: null,
+        decisionIds: [],
+        fallback: true,
+      };
     }
     return { error: first.errorClass, aiRequestId: first.aiRequestId };
   }
@@ -509,7 +625,12 @@ export async function runProtectedTurn(envelope: AiRequestEnvelope, directHelp: 
     ].join("\n"),
   };
   const decisionIds: string[] = [];
-  const record = async (aiRequestId: string, res: PolicyCheckResult, level: number | null, outcome = res.outcome) => {
+  const record = async (
+    aiRequestId: string,
+    res: PolicyCheckResult,
+    level: number | null,
+    outcome = res.outcome,
+  ) => {
     const id = await persistPolicyDecision({
       sessionId: envelope.sessionId,
       aiRequestId,
@@ -551,7 +672,10 @@ export async function runProtectedTurn(envelope: AiRequestEnvelope, directHelp: 
     if (check2.outcome === "ALLOW" || check2.outcome === "REDACT") {
       await record(second.aiRequestId, check2, second.structured.interventionLevel);
       return {
-        reply: check2.outcome === "REDACT" ? (check2.redactedReply ?? second.structured.reply) : second.structured.reply,
+        reply:
+          check2.outcome === "REDACT"
+            ? (check2.redactedReply ?? second.structured.reply)
+            : second.structured.reply,
         turn: second.structured,
         aiRequestId: second.aiRequestId,
         policyOutcome: "BLOCK_AND_REGENERATE",
@@ -604,7 +728,8 @@ export async function* sendSocraMessage(
       researchCondition: true,
     },
   });
-  if (!session || session.userId !== user.id) throw new HttpError(404, "session_not_found", "Session not found");
+  if (!session || session.userId !== user.id)
+    throw new HttpError(404, "session_not_found", "Session not found");
 
   const availability = await getSocraAvailability(user, {
     assignmentId: session.assignmentId,
@@ -671,7 +796,14 @@ export async function* sendSocraMessage(
     });
     yield { type: "delta", text: budget.message };
     if (budget.limit === "rate_limit") {
-      yield { type: "done", messageId: null, interventionLevel: null, citations: [], limitReached: false, policyOutcome: null };
+      yield {
+        type: "done",
+        messageId: null,
+        interventionLevel: null,
+        citations: [],
+        limitReached: false,
+        policyOutcome: null,
+      };
     } else {
       yield limitDone(null);
     }
@@ -707,7 +839,11 @@ export async function* sendSocraMessage(
 
   // Conversation history (prior turns only).
   const history = await prisma.aiMessage.findMany({
-    where: { sessionId: session.id, role: { in: ["USER", "ASSISTANT"] }, id: { not: userMessage.id } },
+    where: {
+      sessionId: session.id,
+      role: { in: ["USER", "ASSISTANT"] },
+      id: { not: userMessage.id },
+    },
     orderBy: { createdAt: "desc" },
     take: def.contextRules.maxConversationTurns,
     select: { role: true, content: true, interventionLevel: true, createdAt: true },
@@ -715,11 +851,16 @@ export async function* sendSocraMessage(
   const conversation: ConversationTurn[] = history.reverse().map((h) => ({
     role: h.role === "USER" ? "user" : "assistant",
     content: h.content,
-    interventionLevel: h.interventionLevel === null ? undefined : (h.interventionLevel as InterventionLevel),
+    interventionLevel:
+      h.interventionLevel === null ? undefined : (h.interventionLevel as InterventionLevel),
     createdAt: h.createdAt.toISOString(),
   }));
 
-  const retrieved = await retrieveFor(session.courseId, `${content} ${ctx.topicTags.join(" ")}`, ctx.allowedResourceIds);
+  const retrieved = await retrieveFor(
+    session.courseId,
+    `${content} ${ctx.topicTags.join(" ")}`,
+    ctx.allowedResourceIds,
+  );
   const directHelp = mode === "PROTECTED_ASSESSMENT" && availability.directHelp;
   const policyVersion =
     mode === "PROTECTED_ASSESSMENT"
@@ -732,7 +873,12 @@ export async function* sendSocraMessage(
 
   const envelope: AiRequestEnvelope = {
     mode,
-    task: mode === "PROTECTED_ASSESSMENT" ? "socratic_turn" : mode === "PRACTICE" ? "practice_tutor_turn" : "review_turn",
+    task:
+      mode === "PROTECTED_ASSESSMENT"
+        ? "socratic_turn"
+        : mode === "PRACTICE"
+          ? "practice_tutor_turn"
+          : "review_turn",
     traceId: randomUUID(),
     userId: user.id,
     courseId: session.courseId,
@@ -768,11 +914,17 @@ export async function* sendSocraMessage(
       researchCondition,
       idempotencyKey: `socra_response_failed:${userMessage.id}`,
       metadata: { mode, errorClass, ...(aiRequestId ? { aiRequestId } : {}) },
-    }).catch((err: unknown) => console.error("[socra] failed to record socra_response_failed", err));
+    }).catch((err: unknown) =>
+      console.error("[socra] failed to record socra_response_failed", err),
+    );
     return {
       type: "error",
-      code: errorClass === "KILL_SWITCH" || errorClass === "BUDGET_EXCEEDED" ? "socra_limit" : "socra_unavailable_now",
-      message: "Socra is unavailable right now. Your work is saved; you can keep editing, running and submitting.",
+      code:
+        errorClass === "KILL_SWITCH" || errorClass === "BUDGET_EXCEEDED"
+          ? "socra_limit"
+          : "socra_unavailable_now",
+      message:
+        "Socra is unavailable right now. Your work is saved; you can keep editing, running and submitting.",
     };
   };
 
@@ -819,7 +971,9 @@ export async function* sendSocraMessage(
   const retrievedById = new Map(retrieved.map((r) => [r.resourceId, r]));
   const citedIds = turn
     ? turn.citedResourceIds.filter((id) => retrievedById.has(id))
-    : retrieved.filter((r) => reply.includes(r.title) || reply.includes(r.resourceId)).map((r) => r.resourceId);
+    : retrieved
+        .filter((r) => reply.includes(r.title) || reply.includes(r.resourceId))
+        .map((r) => r.resourceId);
   const citations = [...new Set(citedIds)].map((id) => {
     const r = retrievedById.get(id)!;
     return { resourceId: id, title: r.title, section: r.section };
@@ -844,7 +998,10 @@ export async function* sendSocraMessage(
       select: { id: true },
     });
     if (decisionIds.length) {
-      await tx.policyDecision.updateMany({ where: { id: { in: decisionIds } }, data: { messageId: msg.id } });
+      await tx.policyDecision.updateMany({
+        where: { id: { in: decisionIds } },
+        data: { messageId: msg.id },
+      });
     }
     for (const [rank, c] of citations.entries()) {
       const r = retrievedById.get(c.resourceId)!;
@@ -866,7 +1023,10 @@ export async function* sendSocraMessage(
       where: { sessionId: session.id },
       _sum: { inputTokens: true, outputTokens: true, costUsd: true },
     });
-    const newMax = level !== null && !fallback ? Math.max(session.maxInterventionLevel, level) : session.maxInterventionLevel;
+    const newMax =
+      level !== null && !fallback
+        ? Math.max(session.maxInterventionLevel, level)
+        : session.maxInterventionLevel;
     await tx.aiSession.update({
       where: { id: session.id },
       data: {
@@ -893,7 +1053,13 @@ export async function* sendSocraMessage(
     const req = aiRequestId
       ? await tx.aiRequest.findUnique({
           where: { id: aiRequestId },
-          select: { model: true, latencyMs: true, inputTokens: true, cachedTokens: true, outputTokens: true },
+          select: {
+            model: true,
+            latencyMs: true,
+            inputTokens: true,
+            cachedTokens: true,
+            outputTokens: true,
+          },
         })
       : null;
     await writeEvent(tx, {
@@ -931,7 +1097,12 @@ export async function* sendSocraMessage(
         ...base,
         eventName: "course_resource_retrieved",
         idempotencyKey: `course_resource_retrieved:${msg.id}:${r.resourceId}:${r.chunkId ?? rank}`,
-        metadata: { resourceId: r.resourceId, ...(r.chunkId ? { chunkId: r.chunkId } : {}), rank, method: r.method },
+        metadata: {
+          resourceId: r.resourceId,
+          ...(r.chunkId ? { chunkId: r.chunkId } : {}),
+          rank,
+          method: r.method,
+        },
       });
     }
     if (level === 6 && !fallback && mode === "PROTECTED_ASSESSMENT") {
@@ -957,7 +1128,9 @@ export async function* sendSocraMessage(
 
   // Misconception candidates (probabilistic; never authoritative) -> D's observation pipeline.
   if (turn && !fallback) {
-    for (const cand of turn.misconceptionCandidates.filter((c) => c.confidence >= MISCONCEPTION_CONFIDENCE_THRESHOLD)) {
+    for (const cand of turn.misconceptionCandidates.filter(
+      (c) => c.confidence >= MISCONCEPTION_CONFIDENCE_THRESHOLD,
+    )) {
       try {
         await prisma.$transaction((tx) =>
           recordMisconceptionObservation(tx, {
@@ -1033,7 +1206,12 @@ export async function readRawTranscript(
   });
   if (!session) throw new HttpError(404, "session_not_found", "Session not found");
   const grant = await prisma.privilegedAccessGrant.findFirst({
-    where: { userId: user.id, permission: "TRANSCRIPT_READ_RAW", revokedAt: null, expiresAt: { gt: new Date() } },
+    where: {
+      userId: user.id,
+      permission: "TRANSCRIPT_READ_RAW",
+      revokedAt: null,
+      expiresAt: { gt: new Date() },
+    },
     orderBy: { grantedAt: "desc" },
     select: { id: true },
   });
@@ -1047,7 +1225,11 @@ export async function readRawTranscript(
         targetId: session.id,
         courseId: session.courseId,
         reason,
-        metadata: { targetUserId: session.userId, grantId: grant?.id ?? null, messageCount: session.messages.length },
+        metadata: {
+          targetUserId: session.userId,
+          grantId: grant?.id ?? null,
+          messageCount: session.messages.length,
+        },
         ip: meta.ip ?? null,
         userAgent: meta.userAgent ?? null,
       },

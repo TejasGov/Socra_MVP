@@ -15,7 +15,12 @@ loadEnv({ path: ".env", quiet: true });
 
 export const PASSWORD = "socra-dev-password";
 export const USERS = {
-  student: "student1@socra.local",
+  /**
+   * Dedicated E2E student. Never student1..3: those are the owner's demo accounts and the suite
+   * submits as this user. It is enrolled in the seeded courses on first use (ensureE2eStudent)
+   * and its submissions and drafts are wiped by the global teardown so reruns always have attempts.
+   */
+  student: "student30@socra.local",
   faculty: "faculty@socra.local",
   research: "research@socra.local",
   admin: "admin@socra.local",
@@ -95,6 +100,7 @@ export const test = base.extend<Fixtures>({
   signedIn: async ({ browser }, use, info) => {
     const contexts: BrowserContext[] = [];
     await use(async (email: string) => {
+      if (email === USERS.student) await ensureE2eStudent(email);
       const { context, page } = await pageAs(browser, email, info);
       contexts.push(context);
       return page;
@@ -128,4 +134,20 @@ export async function assignmentIdByTitle(title: string): Promise<string> {
   );
   if (!rows[0]) throw new Error(`Seeded assignment "${title}" not found. Run npm run db:seed.`);
   return rows[0].id;
+}
+
+let enrolled = false;
+
+/** Make sure the dedicated E2E student is an ACTIVE student in the seeded courses (idempotent). */
+export async function ensureE2eStudent(email: string): Promise<void> {
+  if (enrolled) return;
+  await dbQuery(
+    `insert into "CourseMembership" (id, "userId", "courseId", role, status, "createdAt", "updatedAt")
+     select 'e2e_' || md5(u.id || c.id), u.id, c.id, 'STUDENT', 'ACTIVE', now(), now()
+       from "User" u cross join "Course" c
+      where u.email = $1 and c.code in ('CSE 115', 'CSE 116')
+     on conflict ("userId", "courseId") do update set status = 'ACTIVE', role = 'STUDENT'`,
+    [email],
+  );
+  enrolled = true;
 }

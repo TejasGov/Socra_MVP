@@ -321,7 +321,7 @@ export function PracticeSession({
               <Markdown className="text-base">{item.prompt}</Markdown>
             </div>
             {item.type === "TRACE" && item.starterCode ? (
-              <pre className="border-border bg-surface-2 max-w-[68ch] overflow-x-auto rounded-md border p-3 font-mono text-[13px] leading-5">
+              <pre className="border-border bg-surface-2 max-w-[68ch] overflow-x-auto rounded-md border p-3 font-mono text-code leading-5">
                 {item.starterCode}
               </pre>
             ) : null}
@@ -451,7 +451,7 @@ export function PracticeSession({
                 !result.feedback.includes(result.correctAnswer) ? (
                   <p className="text-fg text-sm">
                     <span className="text-fg-muted">Model answer: </span>
-                    <span className="font-mono text-[13px]">{result.correctAnswer}</span>
+                    <span className="font-mono text-code">{result.correctAnswer}</span>
                   </p>
                 ) : null}
                 {result.selfAssess ? (

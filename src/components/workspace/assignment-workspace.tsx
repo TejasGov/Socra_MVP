@@ -38,6 +38,7 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
   const [progressStatus, setProgressStatus] = useState(data.progressStatus);
   const idemKey = useRef<string | null>(null);
   const confirmationRef = useRef<HTMLDivElement>(null);
+  const keepWorkingRef = useRef<HTMLButtonElement>(null);
 
   const onContent = useCallback((qid: string, c: string) => {
     contents.current[qid] = c;
@@ -227,6 +228,14 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
             </section>
           ) : null}
 
+          {data.socraAvailable && questions.length > 0 ? (
+            <p className="xl:hidden">
+              <a href="#socra-panel" className="text-accent text-sm underline underline-offset-2">
+                Jump to Socra
+              </a>
+            </p>
+          ) : null}
+
           {questions.length > 1 ? (
             <nav aria-label="Questions" className="border-border border-b">
               <ul className="-mb-px flex flex-wrap gap-4">
@@ -293,15 +302,17 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
               )}
               {submitBlockedReason ? <p className="text-fg mt-0.5">{submitBlockedReason}</p> : null}
             </div>
-            <Button
-              variant="primary"
-              size="lg"
-              data-testid="submit-button"
-              onClick={openSubmit}
-              disabled={submitBlockedReason !== null || submitting || questions.length === 0}
-            >
-              {latestSubmission ? "Resubmit assignment" : "Submit assignment"}
-            </Button>
+            {closed ? null : (
+              <Button
+                variant="primary"
+                size="lg"
+                data-testid="submit-button"
+                onClick={openSubmit}
+                disabled={submitBlockedReason !== null || submitting || questions.length === 0}
+              >
+                {latestSubmission ? "Resubmit assignment" : "Submit assignment"}
+              </Button>
+            )}
           </section>
           {submitError ? (
             <p role="alert" className="text-danger text-sm">
@@ -312,6 +323,7 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
 
         <aside
           aria-label="Socra"
+          id="socra-panel"
           data-socra-panel
           className="xl:sticky xl:top-4 xl:h-[calc(100vh-8rem)] xl:self-start"
         >
@@ -327,6 +339,7 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
                   language: q.language,
                 })}
                 contextItems={contextFor(q.type)}
+                questionType={q.type}
                 scopeLabel={
                   questions.length > 1 ? `About question ${questions.indexOf(q) + 1}` : undefined
                 }
@@ -340,12 +353,13 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
       <Dialog
         open={dialogOpen}
         title={latestSubmission ? "Resubmit this assignment?" : "Submit this assignment?"}
+        initialFocus={keepWorkingRef}
         onClose={() => {
           if (!submitting) setDialogOpen(false);
         }}
         footer={
           <>
-            <Button onClick={() => setDialogOpen(false)} disabled={submitting}>
+            <Button ref={keepWorkingRef} onClick={() => setDialogOpen(false)} disabled={submitting}>
               Keep working
             </Button>
             <Button

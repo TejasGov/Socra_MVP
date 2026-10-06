@@ -178,7 +178,7 @@ export function QuestionPane(props: QuestionPaneProps) {
             <summary className="text-fg-muted hover:text-fg cursor-pointer">
               Public test cases ({question.publicTests.length})
             </summary>
-            <ul className="mt-2 space-y-1 font-mono text-[13px]">
+            <ul className="mt-2 space-y-1 font-mono text-code">
               {question.publicTests.map((t) => (
                 <li key={t.id}>
                   <span className="text-fg">{t.input}</span>
@@ -355,7 +355,7 @@ function WrittenEditor({
         readOnly={readOnly}
         aria-describedby={helpId}
         rows={14}
-        className="border-border-strong bg-surface text-fg read-only:bg-surface-2 block w-full resize-y rounded-md border px-3 py-2 text-sm leading-6"
+        className="border-border-input bg-surface text-fg read-only:bg-surface-2 block w-full resize-y rounded-md border px-3 py-2 text-sm leading-6"
       />
       <p id={helpId} className="text-fg-subtle mt-1 text-xs tabular-nums">
         {words} {words === 1 ? "word" : "words"} · saved automatically as you type

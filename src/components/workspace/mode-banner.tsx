@@ -65,6 +65,12 @@ export function ModeBanner({
           mode.
         </p>
       ) : null}
+      {!closed && attemptsLeft === 0 ? (
+        <p className="text-fg mt-2 text-sm">
+          No attempts left. You can keep editing and running code, but changes will not be
+          submitted.
+        </p>
+      ) : null}
       <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs">
         <div className="flex gap-1">
           <dt className="text-fg-subtle">Status</dt>
@@ -85,12 +91,14 @@ export function ModeBanner({
             <dd className="text-fg tabular-nums">{formatDateTime(closeAt)}</dd>
           </div>
         ) : null}
-        <div className="flex gap-1">
-          <dt className="text-fg-subtle">Attempts left</dt>
-          <dd className="text-fg tabular-nums">
-            {attemptsLeft === null ? "Unlimited" : attemptsLeft}
-          </dd>
-        </div>
+        {!closed ? (
+          <div className="flex gap-1">
+            <dt className="text-fg-subtle">Attempts left</dt>
+            <dd className="text-fg tabular-nums">
+              {attemptsLeft === null ? "Unlimited" : attemptsLeft}
+            </dd>
+          </div>
+        ) : null}
         {!closed ? (
           <div className="flex gap-1">
             <dt className="text-fg-subtle">Draft</dt>

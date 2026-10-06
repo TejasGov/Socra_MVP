@@ -81,7 +81,9 @@ test.describe("privacy boundaries", () => {
     expect([403, 404]).toContain(res.status());
     expect(await res.text()).not.toMatch(/"content"/);
 
-    const raw = await page.request.get(`/api/socra/transcripts/${session.id}?reason=curious+student`);
+    const raw = await page.request.get(
+      `/api/socra/transcripts/${session.id}?reason=curious+student`,
+    );
     expect(raw.status()).toBe(403);
   });
 

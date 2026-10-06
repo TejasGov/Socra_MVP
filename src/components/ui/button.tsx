@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ButtonHTMLAttributes, ComponentProps, ReactNode } from "react";
+import type { ButtonHTMLAttributes, ComponentProps, ReactNode, Ref } from "react";
 import { cx } from "./cx";
 
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -35,6 +35,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   /** Disables the button, sets aria-busy, and shows `loadingLabel` (or the children). */
   loading?: boolean;
   loadingLabel?: ReactNode;
+  ref?: Ref<HTMLButtonElement>;
   icon?: ReactNode;
 }
 

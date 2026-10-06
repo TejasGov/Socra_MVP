@@ -275,3 +275,184 @@ Round 1 fixer pass. Verified with `tsc --noEmit`, `eslint src` and `vitest run` 
 Environment item (E2E pollution): `tests/e2e/support/teardown.ts` archives every assignment titled "E2E..." (wired as `globalTeardown` in `playwright.config.ts`) and was run once, archiving 11 assignments in the dev DB. The faculty assignment list now hides ARCHIVED by default (`listAssignmentsForFaculty`, with a "Show archived" link); the student list, home, analytics overview and admin listing already excluded ARCHIVED.
 
 Totals: 33 fixed, 1 partly fixed (14), 0 deferred findings other than the file deletions noted under 14.
+
+---
+
+## Phase 3: workspace
+
+**Scope:** `src/components/workspace/**`, `src/components/socra/**`, `src/components/practice/**`, `src/app/(student)/courses/[courseId]/assignments/[assignmentId]/**` and `src/app/(student)/practice/**`. Also `src/server/domain/socra/sessions.ts`, because it supplies the panel's policy text.
+
+**Method:**
+1. Ran the section 2 greps over the 17 files.
+2. Read the Socra panel, workspace, run console, editor and practice components in full.
+3. Rendered the flows as student1 with Playwright at 1440×900 and 390×844 (`.playwright-mcp/audit/ws.cjs`, `ws2.cjs`; screenshots in `.playwright-mcp/audit/ws/`):
+   - **HW4:** typed code, ran it, ran the public tests, asked Socra, asked for a hint. Attempts are exhausted (5 of 5), so the submit button is correctly disabled with "You have used all of your attempts". I therefore opened the submit dialog on **HW5** (2 of 5) instead and did not confirm it.
+   - **HW3:** review mode, using "Explain the full solution".
+   - **Quiz 2:** switched between questions 1, 2 and 3.
+   - **/practice:** started a session and answered one item.
+4. Checked keyboard behaviour (Tab order, the editor's Esc-then-Tab exit, dialog Escape and focus return) and live regions.
+
+No console errors occurred.
+
+### Summary
+
+The tutor panel meets the section 5.8 spec in all its main points:
+- **Turns:** full-width labelled turns ("You", "Your reasoning", "Socra · Level n, label"). Socra turns carry a 2px accent rule. There are no avatars, bubbles, typing dots, sparkle or bot icons, or "How can I help" copy.
+- **Streaming:** a static "Socra is reading your work…" line and a real Stop button.
+- **Citations:** "Course material used:" lists the sources.
+- **Policy refusals:** shown as normal turns with a Lock line.
+- **Accessibility:** the log is `role="log"`, the composer is labelled, and the send button has an accessible name.
+- **Honest failure copy:** "Socra is unavailable. You can keep working and submit normally.", "Code runner is unavailable right now. Your work is saved.", and the limit message that refers students to their TA.
+- **Save status:** specific ("Draft Saved 9:50 AM", "Offline, changes kept on this device"), with a real conflict resolver ("Keep mine" / "Use saved").
+- **Submit dialog:** states the attempt number, how many questions changed, the draft status and the attempts left.
+- **Editor:** the Esc-then-Tab exit works (focus lands on "Run code") and is shown in the editor toolbar.
+
+The remaining problems are listed below.
+
+| Severity | Count |
+|----------|-------|
+| block | 1 |
+| major | 4 |
+| minor | 15 |
+
+Merge-blocking: **yes**, because of finding 35.
+
+### Findings
+
+**35. [block] Two hand-rolled textareas bypass the form-control fix and keep the 1.61:1 border.** `src/components/socra/socra-panel.tsx:501` (Socra composer) and `src/components/workspace/question-pane.tsx:358` (written-answer editor)
+- **What's wrong:** both use `border-border-strong` directly, so the token fix for finding 2 (which changes `form.tsx`) will not reach them. Checklist 39.
+- **Fix:** replace `border-border-strong` with `border-border-input` in both class strings, or render the UI `Textarea` component. Grep the scope for `border-border-strong` on any `input`, `textarea` or `select` after the fix.
+
+**36. [major] The guidance meter ignores the assignment's hint cap, so students can't see how much help is left.** `src/components/socra/guidance-depth.tsx:29,33-42` and `socra-panel.tsx:340-343`
+- **What's wrong:** it always shows "n of 6" with 7 segments. HW4 is capped at L5 by its policy, and faculty set this cap per assignment. "How Socra works" promises "the panel shows how far along you are" against that limit. Also, the text shows the *current* level while the segments fill to the *deepest* level reached, so the two can disagree.
+- **Fix:**
+  - Return `maxInterventionLevel` from `POST /api/socra/sessions` (`server/domain/socra/sessions.ts`, next to `policySummary`) and pass it to `GuidanceDepth`.
+  - Render "Guidance depth: level {deepest} of {cap} on this assignment ({label})" with `cap + 1` segments.
+  - Drop the separate "current" value.
+  - At the cap, show "Next: ask your TA or instructor".
+
+**37. [major] Socra copy talks about code on non-coding questions.** `src/server/domain/socra/sessions.ts:150` and `socra-panel.tsx:367`
+- **What's wrong:** on Quiz 2 (multiple choice and written answers) the panel header says "Socra sees your code, your latest run, public test results…". The empty state says "Describe what you expect your code to do… Socra reads your current code". The footer correctly says "the assignment prompt, and your current answer", so the panel contradicts itself.
+- **Fix:**
+  - Pass the question type to `policySummaryFor(mode, directHelp, questionType)`. For MULTIPLE_CHOICE and WRITTEN use: "Socra sees the question and your current answer. It asks questions and gives hints but will not choose or write the answer for you."
+  - In `socra-panel.tsx`, add a `questionType` prop. For non-code questions the empty state becomes: "Say which option you are unsure about and why, or explain your reasoning so far."
+
+**38. [major] Socra replies lose their line breaks.** `src/components/workspace/markdown.tsx:36`
+- **What's wrong:** `ReactMarkdown` without `remark-breaks` collapses single newlines. In HW3 review, a line-by-line solution walkthrough ("Line 1: … Line 2: … Line 3: …") renders as one dense paragraph, which defeats the purpose of review mode.
+- **Fix:** add a `breaks` prop that enables `remark-breaks` (`<ReactMarkdown remarkPlugins={breaks ? [remarkBreaks] : []}>`), and pass `breaks` from the Socra turn renderer (`socra-panel.tsx:408`). Leave prompts unchanged.
+
+**39. [major] The public-test table dumps harness internals and breaks identifiers mid-word.** `src/components/workspace/run-console.tsx:139-170`
+- **What's wrong:**
+  - For a submission that doesn't define `running_totals`, every row's Actual cell shows the full traceback, including `/opt/socra/harness.py`, `getattr(m, spec_in["entryPoint"])` and the `^^^^` markers.
+  - `break-all` splits `running_t|otals`.
+  - The Test and Input columns repeat the same call.
+  - Socra then quotes the harness traceback back to the student.
+- **Fix:**
+  - (a) Strip harness frames in the runner result, so only frames from the student's file remain.
+  - (b) When every test fails with the same error, show one line above the table, e.g. "Your code does not define `running_totals(nums)`. The tests call that function.", and put each row's error behind a `<details>` "Show error".
+  - (c) Replace `break-all` with `[overflow-wrap:anywhere]`.
+  - (d) Drop the Input column when it equals the test name.
+
+**40. [minor] Editor line numbers drift from wrapped lines at phone width.** `src/components/workspace/code-editor.tsx` (`EditorView.lineWrapping`)
+- **What's wrong:** at 390px the gutter numbers stack tightly while the wrapped code lines run longer, so a number no longer sits next to its line.
+- **Fix:** re-measure after the web font loads (`document.fonts.ready.then(() => view.requestMeasure())`), or disable `lineWrapping` below `md` and let the editor scroll horizontally.
+
+**41. [minor] Odd composer shortcut copy.** `socra-panel.tsx:492-495,505`
+- **What's wrong:** "Enter or Ctrl+Shift+Enter sends" advertises a redundant chord.
+- **Fix:** remove the Ctrl+Shift+Enter branch and change the help text to "Enter sends. Shift+Enter adds a line."
+
+**42. [minor] `joinList` puts a comma before "and" when there are only two items.** `socra-panel.tsx:538-541`
+- **What's wrong:** "the assignment prompt, and your current answer".
+- **Fix:** `if (items.length === 2) return items.join(" and ");`.
+
+**43. [minor] The policy statement appears twice in different words.** `sessions.ts:145`, `socra-panel.tsx:337-339`
+- **What's wrong:**
+  - On assignments, the page banner ("Socra can help you reason, debug…") and the panel header give two different policy sentences.
+  - In practice, the header reads "Socra · Practice mode" followed by "Practice mode: Socra can explain…".
+- **Fix:**
+  - Drop the "Practice mode: " prefix from the practice summary.
+  - On assignment pages, where the `ModeBanner` already states the policy, show only the context sentence in the panel header, e.g. "Sees your code, latest run and public test results."
+
+**44. [minor] The guidance meter is shown in review mode ("Guidance depth: none yet").** `socra-panel.tsx:340`
+- **Fix:** render it only when `mode === "PROTECTED_ASSESSMENT"`.
+
+**45. [minor] Closed assignments still show a disabled "Resubmit assignment" button and "Attempts left 4".** `assignment-workspace.tsx:296-304`, `workspace/mode-banner.tsx:84-89`
+- **Fix:** when closed, hide the submit button and the attempts item. Keep the existing line "This assignment is closed, so new submissions are not accepted."
+
+**46. [minor] With no attempts left, the editor still edits and autosaves with no hint that the draft can't be submitted (HW4, Quiz 2).** `workspace/mode-banner.tsx`
+- **Fix:** when `attemptsLeft === 0` and the assignment is not closed, add this line to the banner: "No attempts left. You can keep editing and running code, but changes will not be submitted."
+
+**47. [minor] The practice item heading is the item type ("Short answer") instead of the question.** `src/components/practice/practice-session.tsx:309`
+- **Fix:** make the h2 "Question {n}" and move the type into the meta line ("Question 1 · Functions · Short answer · difficulty 2 of 5").
+
+**48. [minor] The practice "Explanation" box reuses the Socra-turn treatment (accent rule plus accent-subtle).** `practice-session.tsx:475-480`
+- **Fix:** use `border-border bg-surface-2 border-l-2` with a `text-fg-muted` label, so the accent rule stays reserved for Socra's voice (guardrails section 3, principle 1).
+
+**49. [minor] The practice list's "Status" column holds action links.** `src/app/(student)/practice/page.tsx:75,94`
+- **Fix:** add a Status cell ("In progress" or "Finished") and a separate unlabelled action column with "Continue" or "View summary", giving each link an sr-only object.
+
+**50. [minor] Run controls sit under the editor rather than in its toolbar (guardrails 5.7).** `question-pane.tsx:230-283`
+- **Fix:** move "Run code" and "Run public tests" into the right side of the 36px editor header row, and move the shortcut hint to helper text under the editor. Lower priority; the current layout works.
+
+**51. [minor] Hard-coded hex colours in the editor syntax theme (`#2c6a3f`, `#535b59`, …) will not follow the dark tokens.** `code-editor.tsx` (the `highlight` and `tokenTheme` definitions)
+- **Fix:** use `var(--color-…)` values.
+
+**52. [minor] `text-[13px]` literal instead of the `text-code` token in 9 places.**
+- **Where:** `markdown.tsx:26`, `run-console.tsx:76,83,133,164,165,168`, `question-pane.tsx:181`, `practice-session.tsx:324,454`.
+- **Fix:** replace each with `text-code`.
+
+**53. [minor] On narrow screens the Socra panel is about 1500px below the fold, after the submit section, with no shortcut to it.**
+- **Where:** `assignment-workspace.tsx:313-338`.
+- **Fix:** below `xl`, add an "Ask Socra" link in the question header that jumps to the composer (give the textarea an `id` and focus it on click).
+
+**54. [minor] The submit dialog opens with focus on the close (×) button.** `src/components/ui/dialog.tsx`
+- **Fix:** add an `initialFocus` ref option, and pass the "Keep working" button from `assignment-workspace.tsx` so Enter on open does nothing destructive.
+
+### Checklist items previously N/A
+
+| # | Item | Result | Evidence / finding |
+|---|------|--------|--------------------|
+| 30 | [block] Tutor as labelled turns, no chatbot tells | PASS | Full-width `article`s labelled You / Your reasoning / Socra; no avatars, bubbles, typing dots or bot icon |
+| 31 | Hint meter visible with text; hint requests explicit | FAIL (major) | "Ask for a hint" is explicit, but the meter shows "of 6" and ignores the assignment cap (#36) |
+| 32 | Composer labelled, Enter/Shift+Enter documented, send labelled, aria-live | PASS | Visible label "Message to Socra", help text, `aria-label="Send to Socra"`, `role="log" aria-live="polite"`; copy nit in #41 |
+| 33 | Policy line at top; refusals as normal turns | PASS | `ModeBanner` plus panel header; refusals render a Lock line inside the Socra turn; duplication noted in #43 |
+
+Re-checked for this scope:
+- **Item 39 (contrast):** FAIL (block), #35.
+- **Item 40 (keyboard):** PASS. Esc then Tab leaves the editor; the dialog's Escape closes it and returns focus to the submit button.
+- **Item 23 (motion):** PASS. No animation.
+- **Item 25 (toasts):** PASS. None.
+- **Item 26 (modals):** PASS. Submit confirmation only.
+- **Item 29 (states):** PASS. Empty, running, runner-unavailable, Socra-unavailable, limit, offline and conflict are all handled with specific copy.
+
+### Re-verification
+Re-run `node .playwright-mcp/audit/ws.cjs` and `ws2.cjs` (with `MSYS_NO_PATHCONV=1`) and check:
+1. The composer border is at least 3:1.
+2. The meter shows the cap on HW4.
+3. The Quiz 2 panel copy no longer mentions code.
+4. The HW3 review reply keeps its line breaks.
+5. The HW4 test table shows a single "does not define running_totals" line with no `/opt/socra` paths.
+
+### Phase 3 fixes applied
+
+| # | Status | What changed |
+|---|--------|--------------|
+| 35 | Fixed | Composer textarea now uses `border-border-input` (`socra-panel.tsx`). The written-answer textarea in `question-pane.tsx:358` also uses `border-border-input` now. |
+| 36 | Fixed | `POST /api/socra/sessions` returns `maxInterventionLevel` (policy cap, additive). The meter reads "Deepest level reached: Level X of cap, label", draws cap+1 segments from the same value, shows "Next: ask your TA or instructor" at the cap, and is hidden outside protected-assessment mode (also covers #44). |
+| 37 | Fixed | `policySummaryFor(mode, directHelp, questionType)` returns non-code copy for non-coding questions; the panel takes `questionType` and uses the non-code empty state. |
+| 38 | Fixed | `Markdown` has a `breaks` prop (`withHardBreaks`, no plugin, fenced code untouched); used for Socra turns only. Unit-tested. |
+| 39 | Fixed | `scrubHarnessText` / `scrubHarnessOutput` in `server/runner/types.ts` strip `/opt/socra/` frames and `spec_in` lines from stderr and test actual/message; applied in `toStudentRunResult` and before the run is recorded, so Socra sees the clean text. The console shows a one-line error summary with "Show error", collapses identical errors into one line above the table, drops the Input column when it duplicates the test name, and uses `[overflow-wrap:anywhere]` instead of `break-all`. |
+| 41 | Fixed | Help text is "Enter sends. Shift+Enter adds a line."; redundant chord removed. |
+| 42 | Fixed | Two-item lists join with " and ". |
+| 43 | Partly fixed | "Practice mode:" prefix removed from the practice summary. The assignment-page duplicate policy sentence is not trimmed. |
+| 44 | Fixed | See #36. |
+| 45 | Fixed | Closed assignments hide the submit button and the "Attempts left" item. |
+| 46 | Fixed | "No attempts left. You can keep editing and running code, but changes will not be submitted." in the banner when attempts are 0 and the assignment is open. |
+| 52 | Fixed | `text-[13px]` replaced by `text-code` in markdown, run-console, question-pane and practice-session. |
+| 53 | Fixed | "Jump to Socra" link below `xl` targeting `#socra-panel`. |
+| 54 | Fixed | `Dialog` takes an `initialFocus` ref (Button accepts `ref`); the submit dialog focuses "Keep working". |
+| 40, 47, 48, 49 | Deferred | Not attempted (time). |
+| 50 | Deferred | Moving run buttons into the editor toolbar (larger refactor). |
+| 51 | Deferred | Tokenized syntax theme in the editor (larger refactor). |
+
+E2E isolation: the Playwright suite now uses only `student30@socra.local` (`USERS.student`), enrols it in CSE 115 and CSE 116 on first use (it was only in CSE 116), and the global teardown deletes its Submissions (cascading answers and grades) and Drafts, and resets AssignmentProgress, for student28-30 in the seeded courses. Append-only tables are never touched. student1-3 are no longer used by any spec. The profile assertion now checks the page heading, because a fresh account has no topic rows.

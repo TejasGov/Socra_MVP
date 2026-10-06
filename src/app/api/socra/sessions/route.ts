@@ -22,5 +22,13 @@ export const POST = route(async (req) => {
   const user = await requireUser();
   const input = await parseJson(req, schema);
   const res = await createSocraSession(user, input);
-  return json({ sessionId: res.sessionId, mode: res.mode, policySummary: res.policySummary }, { status: res.created ? 201 : 200 });
+  return json(
+    {
+      sessionId: res.sessionId,
+      mode: res.mode,
+      policySummary: res.policySummary,
+      maxInterventionLevel: res.maxInterventionLevel,
+    },
+    { status: res.created ? 201 : 200 },
+  );
 });

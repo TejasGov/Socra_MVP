@@ -1,7 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode, type RefObject } from "react";
 import { cx } from "./cx";
 
 /**
@@ -17,6 +17,7 @@ export function Dialog({
   children,
   footer,
   className,
+  initialFocus,
 }: {
   open: boolean;
   onClose: () => void;
@@ -26,6 +27,8 @@ export function Dialog({
   /** Action buttons, right-aligned. Put the confirming action last. */
   footer?: ReactNode;
   className?: string;
+  /** Element to focus on open instead of the browser default (the close button). */
+  initialFocus?: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
@@ -38,9 +41,11 @@ export function Dialog({
     if (open && !el.open) {
       returnFocus.current = document.activeElement as HTMLElement | null;
       el.showModal();
+      initialFocus?.current?.focus();
     } else if (!open && el.open) {
       el.close();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initialFocus is a stable ref object
   }, [open]);
 
   useEffect(() => {
@@ -68,7 +73,7 @@ export function Dialog({
         if (e.target === ref.current) onClose();
       }}
       className={cx(
-        "m-auto w-full max-w-md rounded-lg border border-border bg-surface p-0 text-fg shadow-pop backdrop:bg-fg/30",
+        "border-border bg-surface text-fg shadow-pop backdrop:bg-fg/30 m-auto w-full max-w-md rounded-lg border p-0",
         className,
       )}
     >
@@ -82,13 +87,13 @@ export function Dialog({
               type="button"
               onClick={onClose}
               aria-label="Close dialog"
-              className="-mt-1 -mr-1 inline-flex size-7 items-center justify-center rounded-md text-fg-muted hover:bg-surface-2 hover:text-fg"
+              className="text-fg-muted hover:bg-surface-2 hover:text-fg -mt-1 -mr-1 inline-flex size-7 items-center justify-center rounded-md"
             >
               <X aria-hidden="true" size={16} strokeWidth={1.75} />
             </button>
           </div>
           {description ? (
-            <p id={descId} className="mt-1 text-sm text-fg-muted">
+            <p id={descId} className="text-fg-muted mt-1 text-sm">
               {description}
             </p>
           ) : null}

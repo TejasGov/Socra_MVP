@@ -1,25 +1,8 @@
 import type { Locator, Page } from "@playwright/test";
-import { assignmentIdByTitle, dbQuery, expect, test, USERS } from "./support/fixtures";
+import { expect, test, USERS } from "./support/fixtures";
 
 const STREAM_TIMEOUT = 30_000;
 const RUN_TIMEOUT = 30_000;
-
-/** Prefer student1; fall back to a student who still has HW4 attempts left so reruns stay green. */
-async function studentWithAttemptsLeft(assignmentId: string): Promise<string> {
-  const rows = await dbQuery<{ email: string }>(
-    `select u.email
-       from "User" u
-       join "CourseMembership" m on m."userId" = u.id and m.status = 'ACTIVE' and m.role = 'STUDENT'
-       join "Assignment" a on a.id = $1 and a."courseId" = m."courseId"
-      where u.email like 'student%@socra.local'
-        and (a."attemptLimit" is null
-             or (select count(*) from "Submission" s where s."userId" = u.id and s."assignmentId" = a.id) < a."attemptLimit")
-      order by (u.email = $2) desc, u.email asc
-      limit 1`,
-    [assignmentId, USERS.student],
-  );
-  return rows[0]?.email ?? USERS.student;
-}
 
 /** Replace the contents of a visible CodeMirror editor without fighting auto-close/auto-indent. */
 async function replaceEditorText(page: Page, editor: Locator, text: string) {
@@ -31,15 +14,17 @@ async function replaceEditorText(page: Page, editor: Locator, text: string) {
 test.describe("student journey", () => {
   test("login, edit, run, ask Socra, submit, profile, practice", async ({ signedIn }) => {
     test.setTimeout(240_000);
-    const hw4Id = await assignmentIdByTitle("HW4: Lists and loops");
-    const email = await studentWithAttemptsLeft(hw4Id);
-    const page = await signedIn(email);
+    // Dedicated E2E account only (never student1..3); teardown resets its attempts.
+    const page = await signedIn(USERS.student);
 
     // Open the course, then the HW4 coding assignment.
     await page.goto("/courses");
     await page.locator("#main").getByRole("link", { name: "CSE 115", exact: true }).click();
     await expect(page).toHaveURL(/\/courses\/[^/]+$/);
-    await page.locator("#main").getByRole("link", { name: /HW4: Lists and loops/ }).click();
+    await page
+      .locator("#main")
+      .getByRole("link", { name: /HW4: Lists and loops/ })
+      .click();
     await expect(page).toHaveURL(/\/courses\/[^/]+\/assignments\/[^/]+$/);
     await expect(page.getByTestId("mode-banner")).toBeVisible();
 
@@ -68,9 +53,14 @@ test.describe("student journey", () => {
     }
 
     // Ask Socra.
-    await page.locator('[data-testid="socra-input"]:visible').first().fill("why does my loop fail?");
+    await page
+      .locator('[data-testid="socra-input"]:visible')
+      .first()
+      .fill("why does my loop fail?");
     await page.locator('[data-testid="socra-send"]:visible').first().click();
-    const reply = page.locator('[data-testid="socra-message"][data-role="assistant"]:visible').first();
+    const reply = page
+      .locator('[data-testid="socra-message"][data-role="assistant"]:visible')
+      .first();
     await expect(reply).toBeVisible({ timeout: STREAM_TIMEOUT });
     await expect(reply).not.toHaveAttribute("aria-busy", "true", { timeout: STREAM_TIMEOUT });
     await expect(reply).toHaveText(/\S{3,}/);
@@ -84,7 +74,10 @@ test.describe("student journey", () => {
 
     // Learning profile.
     await page.goto("/profile");
-    await expect(page.getByTestId("profile-topic-row").first()).toBeVisible({ timeout: 20_000 });
+    // The dedicated E2E student starts with no learner state, so the page may show no topic rows yet.
+    await expect(page.getByRole("heading", { name: "Learning profile" })).toBeVisible({
+      timeout: 20_000,
+    });
 
     // Practice: start, answer, get feedback.
     await page.goto("/practice");

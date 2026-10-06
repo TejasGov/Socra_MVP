@@ -30,6 +30,22 @@ export interface RunConsoleProps {
   withTestIds?: boolean;
 }
 
+/** One-line summary of an error: its last non-empty line (the exception message). */
+function errorSummary(text: string): string {
+  const lines = text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const last = lines[lines.length - 1] ?? text.trim();
+  return last.length > 200 ? `${last.slice(0, 197)}…` : last;
+}
+
+/** An "actual" value that is really an error or traceback rather than a returned value. */
+function looksLikeError(text: string | undefined): text is string {
+  if (!text) return false;
+  return /Traceback \(most recent/.test(text) || (/\n/.test(text.trim()) && /Error\b/.test(text));
+}
+
 function RunnerUnavailable() {
   return (
     <p role="alert" className="text-fg text-sm">
@@ -73,14 +89,14 @@ function OutputPanel({
         {run.truncated ? " · output truncated at the limit" : ""}
       </p>
       {run.stdout ? (
-        <pre className="text-fg font-mono text-[13px] leading-5 whitespace-pre-wrap">
+        <pre className="text-fg text-code font-mono leading-5 whitespace-pre-wrap">
           {run.stdout}
         </pre>
       ) : null}
       {run.stderr ? (
         <pre
           aria-label="Errors"
-          className="text-danger font-mono text-[13px] leading-5 whitespace-pre-wrap"
+          className="text-danger text-code font-mono leading-5 whitespace-pre-wrap"
         >
           {run.stderr}
         </pre>
@@ -122,6 +138,18 @@ function TestsPanel({
   if (run.status === "RUNNER_UNAVAILABLE") return <RunnerUnavailable />;
   const passed = run.testResults.filter((r) => r.passed).length;
   const inputFor = new Map(publicTests.map((t) => [t.id, t] as const));
+  const errorOf = (r: StudentRunDto["testResults"][number]) =>
+    !r.passed && looksLikeError(r.actual) ? r.actual.trim() : null;
+  const errorCounts = new Map<string, number>();
+  for (const r of run.testResults) {
+    const e = errorOf(r);
+    if (e) errorCounts.set(e, (errorCounts.get(e) ?? 0) + 1);
+  }
+  const sharedError = [...errorCounts.entries()].find(([, n]) => n > 1)?.[0] ?? null;
+  const showInput = run.testResults.some((r) => {
+    const input = inputFor.get(r.testId)?.input ?? "";
+    return input !== "" && input !== r.name;
+  });
   return (
     <div className="space-y-2">
       <p className="text-fg-muted text-xs tabular-nums">
@@ -130,9 +158,23 @@ function TestsPanel({
         {run.durationMs !== null ? ` · ${run.durationMs} ms` : ""}
       </p>
       {run.testResults.length === 0 && run.stderr ? (
-        <pre className="text-danger font-mono text-[13px] leading-5 whitespace-pre-wrap">
+        <pre className="text-danger text-code font-mono leading-5 whitespace-pre-wrap">
           {run.stderr}
         </pre>
+      ) : null}
+      {sharedError ? (
+        <div className="text-sm">
+          <p className="text-danger">
+            {errorCounts.get(sharedError)} tests failed with the same error:{" "}
+            {errorSummary(sharedError)}
+          </p>
+          <details className="mt-1">
+            <summary className="text-fg-muted cursor-pointer text-xs">Show error</summary>
+            <pre className="text-danger text-code mt-1 font-mono leading-5 [overflow-wrap:anywhere] whitespace-pre-wrap">
+              {sharedError}
+            </pre>
+          </details>
+        </div>
       ) : null}
       {run.testResults.length > 0 ? (
         <table className="w-full border-collapse text-sm">
@@ -141,9 +183,11 @@ function TestsPanel({
               <th scope="col" className="px-2 py-1.5 font-medium">
                 Test
               </th>
-              <th scope="col" className="px-2 py-1.5 font-medium">
-                Input
-              </th>
+              {showInput ? (
+                <th scope="col" className="px-2 py-1.5 font-medium">
+                  Input
+                </th>
+              ) : null}
               <th scope="col" className="px-2 py-1.5 font-medium">
                 Expected
               </th>
@@ -161,12 +205,36 @@ function TestsPanel({
               return (
                 <tr key={r.testId} className="border-border border-b align-top">
                   <td className="px-2 py-2">{r.name}</td>
-                  <td className="px-2 py-2 font-mono text-[13px] break-all">{spec?.input ?? ""}</td>
-                  <td className="px-2 py-2 font-mono text-[13px] break-all">
+                  {showInput ? (
+                    <td className="text-code px-2 py-2 font-mono [overflow-wrap:anywhere]">
+                      {spec?.input ?? ""}
+                    </td>
+                  ) : null}
+                  <td className="text-code px-2 py-2 font-mono [overflow-wrap:anywhere]">
                     {r.expected ?? spec?.expected ?? ""}
                   </td>
-                  <td className="px-2 py-2 font-mono text-[13px] break-all">
-                    {r.actual ?? ""}
+                  <td className="text-code px-2 py-2 font-mono [overflow-wrap:anywhere]">
+                    {(() => {
+                      const err = errorOf(r);
+                      if (!err) return r.actual ?? "";
+                      if (err === sharedError)
+                        return (
+                          <span className="text-fg-muted font-sans text-xs">
+                            Same error as above
+                          </span>
+                        );
+                      return (
+                        <>
+                          <span className="text-danger">{errorSummary(err)}</span>
+                          <details className="mt-1">
+                            <summary className="text-fg-muted cursor-pointer font-sans text-xs">
+                              Show error
+                            </summary>
+                            <pre className="text-danger leading-5 whitespace-pre-wrap">{err}</pre>
+                          </details>
+                        </>
+                      );
+                    })()}
                     {!r.passed && r.message ? (
                       <span className="text-fg-muted mt-1 block font-sans text-xs">
                         {r.message}
