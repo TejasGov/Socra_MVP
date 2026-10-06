@@ -1,0 +1,57 @@
+import type { AiRequestEnvelope } from "@/server/ai/types";
+
+export function envelope(over: Partial<AiRequestEnvelope> = {}): AiRequestEnvelope {
+  return {
+    mode: "PROTECTED_ASSESSMENT",
+    task: "socratic_turn",
+    traceId: "trace-1",
+    userId: "user-1",
+    courseId: "course-1",
+    assignmentId: "asg-1",
+    questionId: "q-1",
+    sessionId: null,
+    researchCondition: null,
+    promptTemplateId: "protected-socratic",
+    promptVersion: "protected-socratic-v1",
+    policyVersion: "protected-policy-v1",
+    assignmentVersion: 1,
+    questionVersion: 1,
+    assignment: {
+      assignmentId: "asg-1",
+      assignmentVersion: 1,
+      title: "Recursive factorial",
+      prompt: "Write a recursive function factorial(n) that returns n! for n >= 0.",
+      questionId: "q-1",
+      questionVersion: 1,
+      learningObjectives: ["Write a base case"],
+      topicTags: ["Recursion"],
+      format: "CODING",
+      starterCode: "def factorial(n):\n    pass\n",
+    },
+    policy: {
+      policyId: "p",
+      policyVersion: 1,
+      maxInterventionLevel: 5,
+      allowDirectSyntaxHelp: true,
+      hintLadder: [],
+      allowedBehaviors: [],
+      forbiddenBehaviors: [],
+    },
+    workspace: {
+      language: "PYTHON",
+      code: "def factorial(n):\n    if n == 0\n        return 1\n    return n * factorial(n - 1)\n",
+    },
+    latestExecution: {
+      runId: "run-1",
+      status: "COMPILE_ERROR",
+      stdout: "",
+      stderr: '  File "main.py", line 2\n    if n == 0\n             ^\nSyntaxError: expected \':\'',
+      exitCode: 1,
+    },
+    retrievalScope: { courseId: "course-1", allowedResourceIds: "ALL_COURSE" },
+    retrievedResources: [],
+    conversation: [],
+    userMessage: "Why doesn't my code run?",
+    ...over,
+  };
+}

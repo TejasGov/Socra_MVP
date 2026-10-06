@@ -1,0 +1,9 @@
+# Normalize text to LF in the repo and in checkouts. The runner harness files and
+# Dockerfiles are executed inside Linux containers, where CRLF breaks them.
+* text=auto eol=lf
+*.sh text eol=lf
+*Dockerfile text eol=lf
+docker/** text eol=lf
+*.pdf binary
+*.png binary
+*.jpg binary
