@@ -12,6 +12,8 @@ const globalForRedis = globalThis as unknown as { __socraRedis?: Redis };
 export function getRedis(): Redis {
   if (!globalForRedis.__socraRedis) {
     globalForRedis.__socraRedis = new Redis(env().REDIS_URL, {
+      // Stop reconnect loops after a few attempts (serverless without Redis); callers already fall back.
+      retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),
       lazyConnect: false,
       maxRetriesPerRequest: 2,
       enableOfflineQueue: false,

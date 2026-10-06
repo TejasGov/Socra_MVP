@@ -314,7 +314,8 @@ export function parseEnv(raw: Record<string, string | undefined>): Env {
   return {
     ...rest,
     DATABASE_URL: required("DATABASE_URL", DATABASE_URL, DEV_DATABASE_URL),
-    REDIS_URL: required("REDIS_URL", REDIS_URL, DEV_REDIS_URL),
+    // Serverless (INLINE_JOBS) can run without Redis: rate limits and job throttles fall back to per-instance memory.
+    REDIS_URL: e.INLINE_JOBS && !REDIS_URL ? DEV_REDIS_URL : required("REDIS_URL", REDIS_URL, DEV_REDIS_URL),
     SESSION_SECRET: sessionSecret,
     RESEARCH_PSEUDONYM_SECRET: pseudonymSecret,
     AI_MOCK_MODE: aiMockMode,
