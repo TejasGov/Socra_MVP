@@ -3,18 +3,31 @@ import { env } from "../env";
 import { DockerRunner } from "./docker-runner";
 import { parseMemoryBytes } from "./docker-args";
 import { RemoteRunner } from "./remote-runner";
+import { VercelSandboxRunner } from "./vercel-sandbox-runner";
 import {
   type CodeRunner,
   type RunLimits,
   type RunnerLanguage,
 } from "./types";
 
-/** Runner selection: CODE_RUNNER_DRIVER=docker (default, ./docker-runner.ts) or remote (./remote-runner.ts). */
+/**
+ * Runner selection: CODE_RUNNER_DRIVER=docker (default, ./docker-runner.ts, via the BullMQ worker), remote
+ * (./remote-runner.ts) or vercel-sandbox (./vercel-sandbox-runner.ts). remote and vercel-sandbox are called directly
+ * by executeRun (no queue/worker).
+ */
 
 let runner: CodeRunner | undefined;
 
 export function getCodeRunner(): CodeRunner {
-  runner ??= env().CODE_RUNNER_DRIVER === "remote" ? new RemoteRunner() : new DockerRunner();
+  if (!runner) {
+    const driver = env().CODE_RUNNER_DRIVER;
+    runner =
+      driver === "remote"
+        ? new RemoteRunner()
+        : driver === "vercel-sandbox"
+          ? new VercelSandboxRunner()
+          : new DockerRunner();
+  }
   return runner;
 }
 

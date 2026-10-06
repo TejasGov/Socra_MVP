@@ -115,3 +115,6 @@ export const POST = route(async (req) => {
   );
   return json(toStudentRunResult(result));
 });
+
+// Vercel function limit: sandbox create + run + stop can exceed the default for multi-test runs.
+export const maxDuration = 60;

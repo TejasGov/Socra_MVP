@@ -5,7 +5,8 @@
  * CodeRunner (docker-runner.ts: disposable container with --network none, --memory, --cpus, --pids-limit,
  * --read-only, tmpfs workdir, timeout, output cap, no app secrets) -> RunResult persisted on CodeRun.
  *
- * A managed microVM/sandbox can replace Docker by implementing CodeRunner (CODE_RUNNER_DRIVER=remote).
+ * A managed microVM/sandbox can replace Docker by implementing CodeRunner (CODE_RUNNER_DRIVER=remote, or
+ * CODE_RUNNER_DRIVER=vercel-sandbox: vercel-sandbox-runner.ts, one single-use Vercel Sandbox microVM per job).
  *
  * Hidden tests: only src/server/runner and src/server/domain/grading may load TestVisibility.HIDDEN cases.
  * `toStudentRunResult()` must be applied before any RunResult leaves the server for a student or student-mode AI.
@@ -116,7 +117,7 @@ export interface RunResult {
   /** True when stdout/stderr were truncated at limits.outputLimitBytes. */
   truncated: boolean;
   errorClass: RunErrorClass | null;
-  /** "docker" | "remote" | ... */
+  /** "docker" | "remote" | "vercel-sandbox" */
   runnerDriver: string;
 }
 

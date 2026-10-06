@@ -2,6 +2,7 @@ import "server-only";
 import { env } from "@/server/env";
 import { getAppHealth } from "@/server/health";
 import { assertCan, type Principal } from "@/server/auth/rbac";
+import { sandboxCredentialsPresent } from "@/server/runner/vercel-sandbox-runner";
 import { isAiKillSwitchOn } from "./ai";
 
 export interface WorkerHealth {
@@ -41,8 +42,14 @@ export async function getSystemHealth(user: Principal) {
   const runner = {
     driver: e.CODE_RUNNER_DRIVER,
     remoteConfigured: e.CODE_RUNNER_DRIVER === "remote" ? Boolean(e.REMOTE_RUNNER_URL) : null,
-    // Runs execute inside the worker; if the worker is down, runs report RUNNER_UNAVAILABLE.
-    executing: worker.reachable && worker.status !== "down",
+    // docker: runs execute inside the worker; if the worker is down, runs report RUNNER_UNAVAILABLE.
+    // remote / vercel-sandbox: called directly from the web process (configuration decides availability).
+    executing:
+      e.CODE_RUNNER_DRIVER === "remote"
+        ? Boolean(e.REMOTE_RUNNER_URL)
+        : e.CODE_RUNNER_DRIVER === "vercel-sandbox"
+          ? sandboxCredentialsPresent()
+          : worker.reachable && worker.status !== "down",
   };
   return {
     app,

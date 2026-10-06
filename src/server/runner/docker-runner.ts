@@ -26,10 +26,10 @@ import { runnerUnavailable } from "./types";
  */
 
 const DOCKER_BIN = process.env.DOCKER_BIN || "docker";
-const GRACE_MS = 1500;
-const TESTS_COLLECT_CAP = 4 * 1024 * 1024;
+export const GRACE_MS = 1500;
+export const TESTS_COLLECT_CAP = 4 * 1024 * 1024;
 
-interface ProcResult {
+export interface ProcResult {
   stdout: string;
   stderr: string;
   exitCode: number | null;
@@ -79,7 +79,7 @@ function cliEnv(): NodeJS.ProcessEnv {
 }
 
 export class DockerRunner implements CodeRunner {
-  readonly driver = "docker";
+  readonly driver: string = "docker";
 
   private images() {
     const e = env();
@@ -120,8 +120,12 @@ export class DockerRunner implements CodeRunner {
     };
   }
 
-  /** Spawn the container, stream stdin, enforce timeout + output cap. */
-  private execContainer(
+  /**
+   * Spawn the container, stream stdin, enforce timeout + output cap. Protected so another sandbox provider
+   * (vercel-sandbox-runner.ts) can swap the transport while reusing the payload protocol, classification and
+   * host-side test assembly below.
+   */
+  protected execContainer(
     job: RunJob,
     stdinPayload: string,
     opts: { hostTimeoutMs: number; collectCap: number },
@@ -221,7 +225,7 @@ export class DockerRunner implements CodeRunner {
   }
 
   /** Detect docker-level failures (daemon down, image missing) so we report RUNNER_UNAVAILABLE, never fake output. */
-  private platformFailure(job: RunJob, p: ProcResult): RunResult | null {
+  protected platformFailure(job: RunJob, p: ProcResult): RunResult | null {
     if (p.spawnError) return runnerUnavailable(job.runId, this.driver, `Docker CLI not available: ${p.spawnError}`);
     if (!p.timedOut && !p.outputLimit && (p.exitCode === 125 || p.exitCode === 126 || p.exitCode === 127)) {
       const msg = (p.stderr || "").trim().split("\n").slice(-2).join(" ");
@@ -252,7 +256,7 @@ export class DockerRunner implements CodeRunner {
     }
   }
 
-  private async runInterpreted(job: RunJob): Promise<RunResult> {
+  protected async runInterpreted(job: RunJob): Promise<RunResult> {
     const outCap = job.limits.outputLimitBytes;
     const defaultTestMs = Math.min(5000, job.limits.timeoutMs);
     if (job.mode === "run") {

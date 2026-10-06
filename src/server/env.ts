@@ -143,7 +143,7 @@ const rawSchema = z.object({
   S3_FORCE_PATH_STYLE: bool(false),
 
   // Code runner
-  CODE_RUNNER_DRIVER: z.enum(["docker", "remote"]).optional().default("docker"),
+  CODE_RUNNER_DRIVER: z.enum(["docker", "remote", "vercel-sandbox"]).optional().default("docker"),
   RUNNER_TIMEOUT_MS: int(10000, 500),
   RUNNER_SCALA_TIMEOUT_MS: int(45000, 1000),
   RUNNER_MEMORY: str("256m"),
@@ -166,6 +166,8 @@ const rawSchema = z.object({
    * transactional outbox after the response is sent, and refresh aggregates / missing embeddings on a throttle.
    */
   INLINE_JOBS: bool(false),
+  /** Show the seeded demo accounts on the login page outside development (demo deployments with synthetic data only). */
+  SHOW_DEMO_ACCOUNTS: bool(false),
   OUTBOX_BATCH_SIZE: int(50, 1),
   OUTBOX_MAX_ATTEMPTS: int(8, 1),
 
@@ -295,6 +297,16 @@ export function parseEnv(raw: Record<string, string | undefined>): Env {
   if (e.STORAGE_DRIVER === "s3" && !e.S3_BUCKET) {
     if (isProd) throw new EnvError("STORAGE_DRIVER=s3 requires S3_BUCKET");
     warnings.push("STORAGE_DRIVER=s3 without S3_BUCKET");
+  }
+  if (
+    e.CODE_RUNNER_DRIVER === "vercel-sandbox" &&
+    !process.env.VERCEL &&
+    !process.env.VERCEL_OIDC_TOKEN &&
+    !(process.env.VERCEL_TOKEN && process.env.VERCEL_TEAM_ID && process.env.VERCEL_PROJECT_ID)
+  ) {
+    warnings.push(
+      "CODE_RUNNER_DRIVER=vercel-sandbox without Vercel credentials (VERCEL_OIDC_TOKEN from `vercel env pull`); code runs will report RUNNER_UNAVAILABLE",
+    );
   }
   if (e.CODE_RUNNER_DRIVER === "remote" && !e.REMOTE_RUNNER_URL) {
     warnings.push(

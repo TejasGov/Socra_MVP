@@ -15,6 +15,7 @@ import {
 /**
  * Run orchestration (contract: B — executeRun). Route/worker callers never touch Docker directly:
  *   executeRun -> BullMQ "code-runs" -> worker (worker/jobs/code-run.ts) -> getCodeRunner().run(job)
+ * Drivers "remote" and "vercel-sandbox" skip the queue and call getCodeRunner().run(job) in-process.
  * If Redis or the worker is not reachable within ~3s, or the wait times out, the result is RUNNER_UNAVAILABLE.
  * Output is never fabricated. Job payloads hold the code and (for GRADING / PUBLIC_TESTS) test specs; they live only in
  * server-side Redis and are removed about 60 seconds after completion (CODE_RUN_JOB_RETENTION_S).
@@ -79,6 +80,11 @@ export async function executeRun(input: ExecuteRunInput): Promise<RunResult> {
     if (!env().REMOTE_RUNNER_URL) {
       return runnerUnavailable(input.runId, driver, "Code execution is not configured on this deployment.");
     }
+    return getCodeRunner().run(buildRunJob(input));
+  }
+  if (driver === "vercel-sandbox") {
+    // Serverless: each run gets its own single-use Vercel Sandbox microVM, called directly (no queue/worker).
+    // The runner itself maps missing credentials / quota / API failures to RUNNER_UNAVAILABLE.
     return getCodeRunner().run(buildRunJob(input));
   }
   const probe = await workerReachable();

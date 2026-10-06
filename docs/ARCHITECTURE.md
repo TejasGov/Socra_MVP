@@ -19,7 +19,7 @@ Related documents: [SECURITY.md](SECURITY.md), [KNOWN_LIMITATIONS.md](KNOWN_LIMI
 | Worker            | Separate Node process. Outbox dispatcher, BullMQ workers, health server on `:3001`                  | `worker/`                              |
 | Postgres          | System of record. pgvector for embeddings, full-text search, append-only triggers                   | `prisma/schema.prisma`, `prisma/migrations` |
 | Redis             | BullMQ queues, login rate limiting, run job payloads (deleted on completion, 60 s at most)           | `src/server/queues.ts`, `redis.ts`     |
-| Code runner       | Docker driver (default) or a remote HTTP driver. Never runs inside the Next.js process              | `src/server/runner`, `docker/runner`   |
+| Code runner       | Docker driver (default), Vercel Sandbox driver (serverless) or a remote HTTP driver. Never runs inside the Next.js process | `src/server/runner`, `docker/runner`   |
 | Object storage    | `local` driver writes under `LOCAL_STORAGE_DIR` (used by research exports). `s3` is a stub that throws                          | `src/server/domain/research/storage.ts` |
 
 The web app and the worker share the same `src/server` code. Code reachable from `worker/**` must not import
@@ -57,6 +57,7 @@ flowchart LR
   Worker --> Storage
   Worker --> Gateway
   Next -.->|"CODE_RUNNER_DRIVER=remote"| Remote["Remote sandbox service<br/>untested"]
+  Next -.->|"CODE_RUNNER_DRIVER=vercel-sandbox"| VSB["Vercel Sandbox<br/>one microVM per run"]
   Worker -.-> Remote
 ```
 
@@ -82,7 +83,7 @@ and `retention`. The `grading` queue has no processor; grading runs in the web p
 | `src/server/http.ts`                | `route()` wrapper, `assertSameOrigin`, `clientIp`, error mapping                                          |
 | `src/server/ai`                     | `gateway.ts`, `modes/*` (per-mode policy and context rules), `providers/{mock,openai}.ts`, `policy-check.ts`, `cost.ts`, `schemas.ts` |
 | `src/server/events`                 | `taxonomy.ts` (event names and schemas), `envelope.ts`, `outbox.ts` (`writeEvent`), `dispatcher.ts`, `consumers/`, `pseudonym.ts` |
-| `src/server/runner`                 | `docker-runner.ts`, `docker-args.ts`, `remote-runner.ts`, `scala-job.ts`, `compare.ts`, `service.ts` (`executeRun`) |
+| `src/server/runner`                 | `docker-runner.ts`, `docker-args.ts`, `vercel-sandbox-runner.ts`, `remote-runner.ts`, `scala-job.ts`, `compare.ts`, `service.ts` (`executeRun`) |
 | `src/server/flags`, `audit`         | Feature flags; append-only audit writer                                                                    |
 | `src/server/domain/assignments`     | Authoring service, student queries, pure state machine, versioned snapshots                                |
 | `src/server/domain/workspace`       | Drafts (optimistic concurrency), runs, AI-safe workspace context                                           |
@@ -341,6 +342,49 @@ Flags and the threat model are in [SECURITY.md](SECURITY.md#4-code-execution-san
   base64 markers) so student prints cannot forge them.
 - If Redis, the worker or Docker is unavailable the API returns `RUNNER_UNAVAILABLE`; output is never fabricated.
 - Images: `socra-runner-python:1`, `socra-runner-node:1`, `socra-runner-scala:1`, built by `npm run runner:pull`.
+
+### Drivers
+
+`CODE_RUNNER_DRIVER` selects the `CodeRunner` (`src/server/runner/index.ts`):
+
+| Driver           | Path                                                 | Languages                 | Use                           |
+| ---------------- | ---------------------------------------------------- | ------------------------- | ----------------------------- |
+| `docker`         | `executeRun` -> BullMQ -> worker -> `docker run`     | Python, JavaScript, Scala | Local / self-hosted (default) |
+| `vercel-sandbox` | `executeRun` -> `VercelSandboxRunner.run` in-process | Python, JavaScript        | Vercel deployment (no Docker) |
+| `remote`         | `executeRun` -> HTTP `POST /v1/run`                  | Whatever the service runs | Untested                      |
+
+`vercel-sandbox` (`src/server/runner/vercel-sandbox-runner.ts`) subclasses `DockerRunner` and replaces only the
+transport (`execContainer`). Per job it calls `@vercel/sandbox`:
+
+```mermaid
+flowchart LR
+  Exec["executeRun<br/>(no queue)"] --> Create["Sandbox.create<br/>runtime python3.13 or node22<br/>networkPolicy deny-all, persistent false, 1 vCPU"]
+  Create --> Write["writeFiles<br/>docker/runner bootstrap + harness<br/>payload.json, no expected values"]
+  Write --> Setup["runCommand with sudo<br/>/opt/socra read-only, /work for uid 65534"]
+  Setup --> Run["runCommand<br/>sudo -u 65534 env -i, bootstrap reads payload on stdin<br/>watchdog kills uid 65534 at the deadline"]
+  Run --> Stop["stop() in finally"]
+  Run -->|"stdout and stderr streamed,<br/>capped host-side"| Assemble["DockerRunner classification<br/>+ compare.ts host-side assembly"]
+```
+
+- The payload protocol, harness files, exit-status mapping (137 before the deadline is `MEMORY_LIMIT`, killed at the
+  deadline is `TIMEOUT`, other non-zero is `RUNTIME_ERROR` or `COMPILE_ERROR`) and the host-side comparison are the
+  Docker ones, so results mean the same thing. Grading (`runGradingTests`, kind `GRADING`, hidden tests) uses the
+  same path.
+- Timeout: an in-VM watchdog at the job deadline (SIGKILL of every uid-65534 process), the SDK's per-command
+  `timeoutMs` 2 s later, a host-side abort 5 s later, and a VM lifetime cap (`Sandbox.create({ timeout })`).
+- Output: streamed into the same `appendCapped` buffers as Docker; once the cap is hit the command is aborted
+  (`OUTPUT_LIMIT`).
+- SDK errors (missing OIDC credentials, HTTP 401/403, 402/429 quota, 5xx, network) become `RUNNER_UNAVAILABLE` with
+  an honest message, so grades stay `PENDING` and can be retried; output is never invented. Scala returns
+  `RUNNER_UNAVAILABLE` ("Scala runs are not available on this deployment") because the SDK has no JVM runtime.
+- Auth: the SDK reads the Vercel OIDC token (request header `x-vercel-oidc-token` on Vercel, or `VERCEL_OIDC_TOKEN`
+  from `vercel env pull` locally). Team and project ids come from the token. `VERCEL_TOKEN` + `VERCEL_TEAM_ID` +
+  `VERCEL_PROJECT_ID` are an alternative outside Vercel.
+- The harness files are read from `docker/runner/` at run time; `next.config.ts` traces them into every server
+  function (`outputFileTracingIncludes`), and `@vercel/sandbox` is a server external package.
+- Measured from a Windows dev machine to `iad1` (create + write + setup + run + stop): Python hello about 2.4 s,
+  Python with 2 function tests about 3.4 s, JavaScript hello about 2.4 s, a 1.5 s timeout about 5 to 6 s. `stop()`
+  accounts for about 1.2 s of each.
 
 ## 12. Knowledge graph
 

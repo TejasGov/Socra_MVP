@@ -39,6 +39,16 @@ actually true. See [SECURITY.md](SECURITY.md) for the pre-launch checklist.
 - **Scala function tests run in one JVM** with an overall timeout only, not a per-test timeout.
 - **Containers share the host kernel.** Isolation is standard Docker hardening (see SECURITY.md section 4), not a
   microVM. Do not treat it as sufficient for hostile multi-tenant use.
+- **Scala is unavailable on Vercel.** The `vercel-sandbox` driver (used on the Vercel deployment) runs Python and
+  JavaScript only; Vercel Sandbox has no JVM runtime and the VM has no network to fetch one. Scala runs and Scala
+  grading report `RUNNER_UNAVAILABLE` ("Scala runs are not available on this deployment") and those grades stay pending.
+- **Vercel Sandbox runs have cold-start latency.** Each run creates and stops its own microVM: about 2.4 s for a
+  Python or JavaScript hello world and about 3.4 s for a run with tests (measured from a dev machine to `iad1`),
+  against under 1 s on local Docker. A timed-out run takes the timeout plus about 3 to 4 s.
+- **Vercel Sandbox ignores `RUNNER_MEMORY` and `RUNNER_CPUS`.** The bound is the VM (1 vCPU, 2 GB); pids, file
+  size, output and wall-clock limits still apply.
+- **Vercel Sandbox needs credentials and quota.** Locally the OIDC token from `vercel env pull` expires after about
+  12 hours. When it is missing or expired, or the plan's sandbox quota is used up, runs report `RUNNER_UNAVAILABLE`.
 - **The remote runner is untested.** `src/server/runner/remote-runner.ts` is a thin client for an HTTP contract; it has
   not been run against a real service.
 - **The containerized worker cannot run code.** The `Dockerfile` does not include the Docker CLI or socket access, so
