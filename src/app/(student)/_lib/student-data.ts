@@ -122,3 +122,11 @@ export function practiceHref(courseId: string, topicId?: string): string {
 export function assignmentHref(a: { courseId: string; id: string }): string {
   return `/courses/${a.courseId}/assignments/${a.id}`;
 }
+
+/** Submitted once, still open, attempts left: the date until which the student can resubmit; otherwise null. */
+export function resubmitUntil(a: CardWithCourse, now: Date = new Date()): Date | null {
+  if (a.isClosed || a.progressStatus !== "SUBMITTED") return null;
+  if (a.attemptLimit !== null && a.attemptsUsed >= a.attemptLimit) return null;
+  const until = a.closeAt ?? a.dueAt;
+  return until && until.getTime() > now.getTime() ? until : null;
+}

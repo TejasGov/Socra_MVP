@@ -27,6 +27,7 @@ tables.
 - **Versioning**: `metricVersion = 1`. A definition change gets a new version.
 - **Grain**: course and assignment correctness metrics pool student-question pairs ("tasks"); question metrics are
   per student.
+- **Final vs first**: both use graded attempts in `attemptNumber` order, so final correctness equals first-attempt correctness unless students resubmitted with a different outcome. "Revised" in guided recovery includes draft edits after Socra before the first submission, so it does not imply a resubmission.
 - **Wording**: the UI reports observed differences only (PRD §25.3, Appendix E). No causal claims.
 
 ## Metrics

@@ -211,9 +211,12 @@ function simulateAssignment(
   // ---- optional resubmission for questions that did not fully pass
   const allowed = (def.attemptLimit ?? 1) > 1;
   const failed = eps.filter((e) => !e.passedAll);
-  if (allowed && failed.length > 0 && r() < 0.5 * (0.4 + st.persist)) {
-    let t2 = submitAt + intBetween(r, 4, 30) * HOUR_MS;
-    if (t2 < endCap + lateWindow && t2 < anchorMs - 2 * HOUR_MS) {
+  if (allowed && failed.length > 0 && r() < 0.9 * (0.5 + 0.5 * st.persist)) {
+    // Resubmit while the assignment is still open: clip the delay so it fits before the cutoff.
+    const room = Math.min(endCap + lateWindow, anchorMs - 2 * HOUR_MS) - submitAt;
+    const delay = Math.min(intBetween(r, 4, 30) * HOUR_MS, Math.floor(room * (0.4 + 0.4 * r())));
+    let t2 = submitAt + delay;
+    if (delay >= 40 * MIN_MS && t2 < endCap + lateWindow && t2 < anchorMs - 2 * HOUR_MS) {
       const eps2 = eps.map((e) => e);
       for (const [i, e] of eps.entries()) {
         if (e.passedAll) continue;

@@ -4,6 +4,14 @@ import {
   DEFAULT_HINT_LADDER,
 } from "@/server/domain/assignments/schema";
 import type { AssignmentInputSerialized } from "@/server/domain/assignments/service";
+import {
+  buildAnswerKey,
+  choiceId,
+  parseAnswerKey,
+  parseStoredChoices,
+  splitAccepted,
+  type NormalizeMode,
+} from "@/lib/quiz";
 
 /**
  * Client-side form model. Tests keep args/expected as JSON text so faculty can type them; they are parsed on save.
@@ -41,6 +49,13 @@ export interface ScaffoldUi {
   hint: string;
 }
 
+export interface ChoiceUi {
+  key: string;
+  /** Stored choice id (a, b, c, ...); the answer key and student answers refer to it. */
+  id: string;
+  text: string;
+}
+
 export interface QuestionUi {
   key: string;
   id?: string;
@@ -52,8 +67,16 @@ export interface QuestionUi {
   entryPoint: string;
   starterCode: string;
   referenceSolution: string;
-  choicesText: string;
+  /** MULTIPLE_CHOICE options. */
+  choices: ChoiceUi[];
+  /** Id of the correct choice (MULTIPLE_CHOICE). */
   correctChoice: string;
+  /** SHORT_ANSWER: accepted answers; ESSAY: key points. One per line. */
+  acceptedText: string;
+  /** Shown to students in review mode after solutions are released. */
+  explanation: string;
+  /** Short-answer comparison mode kept from the stored key. */
+  normalize: NormalizeMode;
   difficulty: number;
   topicKeys: string[];
   tests: TestUi[];
@@ -115,18 +138,26 @@ export function emptyTest(visibility: Visibility = "PUBLIC"): TestUi {
 }
 
 export function emptyQuestion(format: FormState["format"], language: Language | ""): QuestionUi {
+  const type: QuestionUi["type"] =
+    format === "CODING" ? "CODING" : format === "QUIZ" ? "MULTIPLE_CHOICE" : "SHORT_ANSWER";
   return {
     key: newKey(),
     title: "",
     prompt: "",
-    type: format === "CODING" ? "CODING" : format === "QUIZ" ? "MULTIPLE_CHOICE" : "SHORT_ANSWER",
+    type,
     points: 10,
     language,
     entryPoint: "",
     starterCode: "",
     referenceSolution: "",
-    choicesText: "",
+    choices:
+      type === "MULTIPLE_CHOICE"
+        ? [0, 1, 2, 3].map((i) => ({ key: newKey(), id: choiceId(i), text: "" }))
+        : [],
     correctChoice: "",
+    acceptedText: "",
+    explanation: "",
+    normalize: "loose",
     difficulty: 2,
     topicKeys: [],
     tests: [],
@@ -205,12 +236,7 @@ export function fromServer(input: AssignmentInputSerialized): FormState {
     learningObjectives: input.learningObjectives,
     topicKeys: input.topicKeys,
     questions: input.questions.map((q) => {
-      const key =
-        q.answerKey && typeof q.answerKey === "object" && "correct" in (q.answerKey as object)
-          ? String((q.answerKey as { correct: unknown }).correct)
-          : typeof q.answerKey === "string"
-            ? q.answerKey
-            : "";
+      const key = parseAnswerKey(q.answerKey);
       return {
         key: newKey(),
         id: q.id,
@@ -222,8 +248,11 @@ export function fromServer(input: AssignmentInputSerialized): FormState {
         entryPoint: q.entryPoint ?? "",
         starterCode: q.starterCode ?? "",
         referenceSolution: q.referenceSolution ?? "",
-        choicesText: (q.choices ?? []).join("\n"),
-        correctChoice: key,
+        choices: choicesFromStored(q.choices),
+        correctChoice: correctIdFromStored(q.choices, key.correct),
+        acceptedText: (q.type === "ESSAY" ? key.keyPoints : key.accepted).join("\n"),
+        explanation: key.explanation,
+        normalize: q.answerKey ? key.normalize : "loose",
         difficulty: q.difficulty,
         topicKeys: q.topicKeys,
         tests: q.tests.map((t) => ({
@@ -270,6 +299,57 @@ export function fromServer(input: AssignmentInputSerialized): FormState {
   };
 }
 
+const isLegacyChoices = (raw: unknown): boolean =>
+  Array.isArray(raw) && raw.every((c) => typeof c === "string");
+
+/** Stored choices -> editable rows. Legacy plain-string choices get seed-style ids (a, b, ...). */
+function choicesFromStored(raw: unknown): ChoiceUi[] {
+  const legacy = isLegacyChoices(raw);
+  return parseStoredChoices(raw).map((c, i) => ({
+    key: newKey(),
+    id: legacy ? choiceId(i) : c.id,
+    text: c.text,
+  }));
+}
+
+function correctIdFromStored(raw: unknown, correct: string | null): string {
+  if (correct === null) return "";
+  const choices = parseStoredChoices(raw);
+  const i = choices.findIndex((c) => c.id === correct);
+  if (i < 0) return "";
+  return isLegacyChoices(raw) ? choiceId(i) : choices[i]!.id;
+}
+
+/** Next unused seed-style choice id. */
+export function nextChoiceId(choices: ChoiceUi[]): string {
+  const used = new Set(choices.map((c) => c.id));
+  for (let i = 0; i < 26; i++) if (!used.has(choiceId(i))) return choiceId(i);
+  return newKey();
+}
+
+/** Question fields that become QuestionVersion.choices / answerKey (seed convention, see src/lib/quiz.ts). */
+export function questionKeyPayload(q: QuestionUi): {
+  choices: Array<{ id: string; text: string }> | null;
+  answerKey: Record<string, unknown> | undefined;
+} {
+  const choices =
+    q.type === "MULTIPLE_CHOICE"
+      ? q.choices.filter((c) => c.text.trim()).map((c) => ({ id: c.id, text: c.text.trim() }))
+      : null;
+  const correct =
+    choices && choices.some((c) => c.id === q.correctChoice) ? q.correctChoice : undefined;
+  return {
+    choices,
+    answerKey: buildAnswerKey({
+      type: q.type,
+      correctChoice: correct,
+      accepted: splitAccepted(q.acceptedText),
+      explanation: q.explanation,
+      normalize: q.normalize,
+    }),
+  };
+}
+
 // ---- form -> payload --------------------------------------------------------------------------------------------
 
 export class FormError extends Error {}
@@ -305,10 +385,8 @@ export function toPayload(f: FormState): Record<string, unknown> {
     topicKeys: f.topicKeys,
     aiSuggestionId: f.aiSuggestionId,
     questions: f.questions.map((q, qi) => {
-      const choices = q.choicesText
-        .split("\n")
-        .map((c) => c.trim())
-        .filter(Boolean);
+      const { choices, answerKey } = questionKeyPayload(q);
+      const coding = q.type === "CODING";
       return {
         id: q.id,
         title: q.title,
@@ -316,14 +394,11 @@ export function toPayload(f: FormState): Record<string, unknown> {
         type: q.type,
         points: Number(q.points) || 0,
         language: q.type === "CODING" ? q.language || f.language || null : null,
-        starterCode: q.starterCode || null,
-        entryPoint: q.entryPoint || null,
+        starterCode: coding ? q.starterCode || null : null,
+        entryPoint: coding ? q.entryPoint || null : null,
         referenceSolution: q.referenceSolution || null,
-        choices: q.type === "MULTIPLE_CHOICE" ? choices : null,
-        answerKey:
-          q.type === "MULTIPLE_CHOICE" && q.correctChoice
-            ? { correct: q.correctChoice }
-            : undefined,
+        choices,
+        answerKey,
         difficulty: q.difficulty,
         topicKeys: q.topicKeys,
         tests:
@@ -443,7 +518,29 @@ export function applySuggestion(
   const qs = arr(s.questions).map((x, qi): QuestionUi => {
     const o = obj(x);
     const q = emptyQuestion(next.format, next.language);
+    const type = str(o.type);
+    if (
+      type === "CODING" ||
+      type === "SHORT_ANSWER" ||
+      type === "ESSAY" ||
+      type === "MULTIPLE_CHOICE"
+    )
+      q.type = type;
     q.title = str(o.title) || `Question ${qi + 1}`;
+    q.explanation = str(o.explanation);
+    q.choices = arr(o.choices).map((c, ci) => {
+      const co = obj(c);
+      return {
+        key: newKey(),
+        id: str(co.id) || choiceId(ci),
+        text: typeof c === "string" ? c : str(co.text),
+      };
+    });
+    const correct = str(o.correctChoice);
+    q.correctChoice = q.choices.some((c) => c.id === correct) ? correct : "";
+    q.acceptedText = arr(o.acceptedAnswers)
+      .filter((a): a is string => typeof a === "string")
+      .join("\n");
     q.prompt = str(o.prompt);
     q.starterCode = str(o.starterCode);
     q.entryPoint = str(o.entryPoint);

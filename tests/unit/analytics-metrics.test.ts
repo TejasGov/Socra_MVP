@@ -71,6 +71,19 @@ describe("correctness metrics", () => {
     expect(finalCorrectness(facts, 1)).toMatchObject({ numerator: 2, denominator: 3 });
   });
 
+  it("final correctness is never below first-attempt correctness when students only improve", () => {
+    const improving = [
+      fact({ userId: "a", attempts: [attempt(1, 0.5), attempt(2, 1)] }),
+      fact({ userId: "b", attempts: [attempt(1, 1)] }),
+      fact({ userId: "c", attempts: [attempt(1, 0), attempt(2, 1), attempt(3, 1)] }),
+    ];
+    const first = firstAttemptCorrectness(improving, 1);
+    const final = finalCorrectness(improving, 1);
+    expect(first.numerator).toBe(1);
+    expect(final.numerator).toBe(3);
+    expect(final.numerator).toBeGreaterThanOrEqual(first.numerator);
+  });
+
   it("retry improvement = improved later attempt / students with 2+ attempts", () => {
     expect(retryImprovement(facts, 1)).toMatchObject({ numerator: 2, denominator: 2, value: 1 });
   });

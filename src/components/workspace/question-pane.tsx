@@ -323,6 +323,25 @@ export function QuestionPane(props: QuestionPaneProps) {
           label={`Your answer${total > 1 ? ` to question ${index + 1}` : ""}`}
         />
       )}
+      {question.answerReview ? (
+        <section
+          aria-label={`Answer explanation${total > 1 ? ` for question ${index + 1}` : ""}`}
+          className="border-border bg-surface-2 space-y-1 rounded-md border px-3 py-2 text-sm"
+          data-testid={hidden ? undefined : "answer-review"}
+        >
+          {question.answerReview.correctAnswer ? (
+            <p className="text-fg">
+              <span className="font-semibold">Correct answer: </span>
+              {question.answerReview.correctAnswer}
+            </p>
+          ) : null}
+          {question.answerReview.explanation ? (
+            <div className="text-fg-muted">
+              <Markdown>{question.answerReview.explanation}</Markdown>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
     </div>
   );
 }

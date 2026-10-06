@@ -1,4 +1,5 @@
 import type { AssignmentInput } from "./schema";
+import { parseAnswerKey, parseStoredChoices } from "@/lib/quiz";
 
 /**
  * Pure publish-readiness checks (no DB). Returned as a list so the publish review can show every problem at once.
@@ -83,8 +84,15 @@ export function validateForPublish(input: AssignmentInput): PublishIssue[] {
         }
       }
     } else if (q.type === "MULTIPLE_CHOICE") {
-      if ((q.choices ?? []).length < 2)
-        err(`${at}.choices`, `Question ${i + 1}: add at least two choices.`);
+      const choices = parseStoredChoices(q.choices);
+      if (choices.length < 2) err(`${at}.choices`, `Question ${i + 1}: add at least two choices.`);
+      if (choices.some((c) => c.text.trim() === ""))
+        err(`${at}.choices`, `Question ${i + 1}: every choice needs text.`);
+      const correct = parseAnswerKey(q.answerKey).correct;
+      if (choices.length >= 2 && !choices.some((c) => c.id === correct))
+        err(`${at}.answerKey`, `Question ${i + 1}: mark the correct choice.`);
+    } else if (q.type === "SHORT_ANSWER" && parseAnswerKey(q.answerKey).accepted.length > 0) {
+      // Graded automatically against the accepted answers.
     } else if (q.rubric.length === 0) {
       warn(
         `${at}.rubric`,

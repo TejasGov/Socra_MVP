@@ -22,6 +22,7 @@ import {
   assignmentHref,
   practiceHref,
   recentSocraSessions,
+  resubmitUntil,
   studentCourses,
 } from "../_lib/student-data";
 
@@ -49,11 +50,16 @@ export default async function HomePage() {
     Promise.all(courses.map((c) => getLearnerProfile(user.id, c.id).then((p) => ({ course: c, p })))),
   ]);
 
-  const open = assignments.filter(
-    (a) => !a.isClosed && (a.progressStatus === "NOT_STARTED" || a.progressStatus === "IN_PROGRESS"),
-  );
+  const unsubmitted = (a: (typeof assignments)[number]) =>
+    a.progressStatus === "NOT_STARTED" || a.progressStatus === "IN_PROGRESS";
+  const open = assignments.filter((a) => !a.isClosed && (unsubmitted(a) || resubmitUntil(a)));
+  // Unsubmitted first, then by due date.
   const upcoming = [...open]
-    .sort((x, y) => (x.dueAt?.getTime() ?? Infinity) - (y.dueAt?.getTime() ?? Infinity))
+    .sort(
+      (x, y) =>
+        Number(!unsubmitted(x)) - Number(!unsubmitted(y)) ||
+        (x.dueAt?.getTime() ?? Infinity) - (y.dueAt?.getTime() ?? Infinity),
+    )
     .slice(0, 6);
   const inProgress = assignments.filter((a) => a.progressStatus === "IN_PROGRESS" && !a.isClosed);
   const feedback = assignments.filter((a) => a.progressStatus === "RETURNED");
@@ -75,11 +81,11 @@ export default async function HomePage() {
 
       <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="min-w-0 space-y-8">
-          <Section id="upcoming" title="Due next" meta="Open assignments you have not submitted, soonest first.">
+          <Section id="upcoming" title="Due next" meta="Open assignments you have not submitted, then submitted ones you can still resubmit.">
             {upcoming.length === 0 ? (
               <EmptyState>Nothing is due. New assignments appear here when your instructor publishes them.</EmptyState>
             ) : (
-              <Table caption="Open assignments, soonest due first">
+              <Table caption="Open assignments, unsubmitted first, then by due date">
                 <THead>
                   <tr>
                     <TH>Assignment</TH>
@@ -103,6 +109,15 @@ export default async function HomePage() {
                       </TD>
                       <TD>
                         <StatusCell a={a} />
+                        {resubmitUntil(a) ? (
+                          <p className="mt-0.5 text-xs text-fg-subtle">
+                            Submitted, resubmission open until{" "}
+                            {resubmitUntil(a)!.toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                            {a.attemptLimit !== null
+                              ? `. ${a.attemptLimit - a.attemptsUsed} of ${a.attemptLimit} attempts left`
+                              : ""}
+                          </p>
+                        ) : null}
                       </TD>
                       <TD>
                         <ModeCell a={a} />
