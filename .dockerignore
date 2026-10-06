@@ -1,0 +1,16 @@
+node_modules
+.next
+worker-dist
+src/generated
+.git
+.github
+.env
+.env.local
+.env.*.local
+coverage
+playwright-report
+test-results
+storage
+docs/*.pdf
+Dockerfile
+docker-compose.yml

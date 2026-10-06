@@ -1,0 +1,82 @@
+name: socra
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: socra
+      POSTGRES_PASSWORD: socra
+      POSTGRES_DB: socra
+    # Loopback only: these are development credentials and must not be reachable from the network.
+    ports:
+      - "127.0.0.1:5544:5432"
+    volumes:
+      - socra_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U socra -d socra"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    # Loopback only: Redis has no password here and holds code-run payloads.
+    ports:
+      - "127.0.0.1:6390:6379"
+    volumes:
+      - socra_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Optional: run the production image inside compose (`docker compose --profile app up -d --build`).
+  # Not started by default; local development uses `npm run dev` on the host.
+  app:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      DATABASE_URL: postgresql://socra:socra@postgres:5432/socra?schema=public
+      REDIS_URL: redis://redis:6379
+      APP_URL: http://localhost:3000
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "worker-dist/index.mjs"]
+    env_file:
+      - path: .env.local
+        required: false
+    environment:
+      DATABASE_URL: postgresql://socra:socra@postgres:5432/socra?schema=public
+      REDIS_URL: redis://redis:6379
+      WORKER_HEALTH_PORT: "3001"
+    ports:
+      - "127.0.0.1:3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  socra_pgdata:
+  socra_redisdata:

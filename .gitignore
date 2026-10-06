@@ -1,0 +1,34 @@
+# deps
+node_modules/
+
+# next
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# build output
+worker-dist/
+src/generated/
+
+# env (keep .env.example)
+.env
+.env.local
+.env.*.local
+
+# tests
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# local storage / exports
+storage/
+.data/
+
+# misc
+.DS_Store
+*.log
+
+# Local design-audit captures
+.playwright-mcp/

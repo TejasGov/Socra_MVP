@@ -1,0 +1,2376 @@
+// Socra Pilot Research V1 — complete data model.
+//
+// Conventions (see docs/ASSUMPTIONS.md):
+// - Table/column names are Prisma defaults (PascalCase tables, camelCase columns). Quote them in raw SQL:
+//   SELECT "courseId" FROM "ResourceChunk".
+// - IDs are text (cuid by default) so the deterministic seed can use readable ids.
+// - Planes (PRD Appendix D / data-pipelines digest):
+//     identity        User, AuthIdentity, Session, PrivilegedAccessGrant
+//     transactional   Course*, Topic*, Assignment*, Question*, Draft, CodeRun, Submission*, Grade*
+//     conversation    AiSession, AiMessage (raw text; restricted), TranscriptAccessLog
+//     learning        LearningEvidence (append-only), LearnerTopicState (derived), Misconception*, Practice*
+//     analytics       AnalyticsEvent, OutboxEvent, ProcessedEvent, *Aggregate
+//     research        StudyParticipant, ResearchParticipantMapping (protected), ResearchEvent, ResearchExport, DatasetManifest
+//     model-improve   TrainingCandidate, DatasetVersion, HeldOutEvalItem
+//     ops             FeatureFlag, AuditLog, BackgroundJobFailure, RetentionPolicy, RosterImport*
+// - Telemetry/event tables deliberately carry ids WITHOUT foreign keys so they survive retention jobs
+//   and can be pseudonymized independently.
+// - Raw SQL in the init migration adds: pgvector extension, HNSW index on vector columns, tsvector
+//   trigger + GIN index on ResourceChunk, append-only triggers on AuditLog / LearningEvidence /
+//   HeldOutEvalItem / AnalyticsEvent.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+/// Global (institution-level) role. Course-level role lives on CourseMembership.
+enum Role {
+  STUDENT
+  TA
+  INSTRUCTOR
+  RESEARCH_ADMIN
+  SYSTEM_ADMIN
+}
+
+enum CourseRole {
+  STUDENT
+  TA
+  INSTRUCTOR
+}
+
+enum MembershipStatus {
+  ACTIVE
+  DROPPED
+}
+
+enum AuthProvider {
+  LOCAL
+  OIDC
+}
+
+/// Permissions that are never implied by a role; they require an explicit, reasoned, expiring grant.
+enum PrivilegedPermission {
+  TRANSCRIPT_READ_RAW
+}
+
+enum ProgrammingLanguage {
+  PYTHON
+  JAVASCRIPT
+  SCALA
+}
+
+enum TopicRelationType {
+  PREREQUISITE_OF
+  RELATED_TO
+  PART_OF
+  TRANSFER_TO
+}
+
+enum ResourceType {
+  LECTURE_NOTES
+  SLIDES
+  READING
+  EXAMPLE_CODE
+  LINK
+  DOCUMENT
+  OTHER
+}
+
+enum ResourceStatus {
+  PENDING
+  PROCESSING
+  READY
+  FAILED
+  ARCHIVED
+}
+
+enum ResourceAccessScope {
+  /// Retrievable by every course member (incl. Socra in student modes).
+  COURSE_ALL
+  /// Staff-only material (never retrieved for students).
+  STAFF_ONLY
+  /// Retrievable only within the assignments that list it (AssignmentResource).
+  ASSIGNMENT_SCOPED
+}
+
+/// Assignment-level lifecycle. Per-student SUBMITTED/RETURNED live on AssignmentProgress / Submission.
+enum AssignmentState {
+  DRAFT
+  SCHEDULED
+  PUBLISHED_PROTECTED
+  CLOSED
+  ARCHIVED
+}
+
+enum AssignmentFormat {
+  CODING
+  WRITTEN
+  QUIZ
+}
+
+enum SolutionReleaseMode {
+  /// Never release reference solutions.
+  NEVER
+  /// Release automatically when the assignment closes.
+  ON_CLOSE
+  /// Instructor releases manually after close.
+  MANUAL
+}
+
+enum ResourceScopeMode {
+  ALL_COURSE_RESOURCES
+  SELECTED_RESOURCES
+  NONE
+}
+
+enum QuestionType {
+  CODING
+  SHORT_ANSWER
+  ESSAY
+  MULTIPLE_CHOICE
+}
+
+enum TestVisibility {
+  /// Shown to students, runnable from the workspace.
+  PUBLIC
+  /// Grading only. Never leaves src/server/runner + src/server/domain/grading.
+  HIDDEN
+  /// Server-side diagnostics that may inform Socra (outcome category only, never contents).
+  DIAGNOSTIC
+}
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  SUBMITTED
+  RETURNED
+  CLOSED
+}
+
+enum SubmissionStatus {
+  RECEIVED
+  GRADING
+  GRADED
+  RETURNED
+  FAILED
+}
+
+enum CodeRunKind {
+  RUN
+  PUBLIC_TESTS
+  GRADING
+}
+
+enum CodeRunStatus {
+  QUEUED
+  RUNNING
+  OK
+  COMPILE_ERROR
+  RUNTIME_ERROR
+  TIMEOUT
+  MEMORY_LIMIT
+  OUTPUT_LIMIT
+  RUNNER_UNAVAILABLE
+  INTERNAL_ERROR
+}
+
+enum GradeScope {
+  SUBMISSION
+  QUESTION
+}
+
+enum GradeStatus {
+  PENDING
+  SUGGESTED
+  FINAL
+}
+
+enum GradingMethod {
+  DETERMINISTIC_TESTS
+  RUBRIC
+  AI_SUGGESTED_RUBRIC
+  MANUAL
+  MIXED
+}
+
+enum GraderType {
+  SYSTEM
+  AI
+  INSTRUCTOR
+  TA
+}
+
+enum AiMode {
+  PROTECTED_ASSESSMENT
+  PRACTICE
+  POST_ASSESSMENT_REVIEW
+  FACULTY_AUTHORING
+  FACULTY_ANALYTICS
+}
+
+enum AiProviderName {
+  MOCK
+  OPENAI
+}
+
+enum AiSessionStatus {
+  ACTIVE
+  ENDED
+  LIMIT_REACHED
+  ESCALATED
+}
+
+enum AiMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+  TOOL
+}
+
+enum AiRequestStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  BLOCKED_BY_POLICY
+  BUDGET_EXCEEDED
+  FALLBACK
+}
+
+enum AiErrorClass {
+  TIMEOUT
+  RATE_LIMITED
+  AUTH
+  PROVIDER_UNAVAILABLE
+  INVALID_REQUEST
+  CONTENT_FILTER
+  SCHEMA_VALIDATION
+  BUDGET_EXCEEDED
+  KILL_SWITCH
+  NOT_CONFIGURED
+  UNKNOWN
+}
+
+enum PolicyOutcome {
+  ALLOW
+  REVISE
+  BLOCK
+  ESCALATE
+}
+
+enum RetrievalMethod {
+  VECTOR
+  FULL_TEXT
+  KEYWORD
+  HYBRID
+}
+
+enum SuggestionStatus {
+  PENDING
+  ACCEPTED
+  EDITED
+  DISCARDED
+}
+
+enum EscalationStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+/// Retention / privacy categories (PRD 26.4, digest 1.11). Every sensitive row maps to one.
+enum RetentionClass {
+  IDENTITY
+  EDUCATIONAL_RECORD
+  SENSITIVE_CONVERSATION
+  AI_REQUEST_LOG
+  LEARNING_EVIDENCE
+  AGGREGATE
+  RESEARCH
+  SECURITY_AUDIT
+  TRAINING
+  OPERATIONAL
+}
+
+enum PrivacyClass {
+  IDENTITY
+  EDUCATIONAL_RECORD
+  SENSITIVE_CONVERSATION
+  AGGREGATE
+  RESEARCH_PSEUDONYMOUS
+  MODEL_TRAINING_CURATED
+  OPERATIONAL
+}
+
+enum EvidenceSourceType {
+  SUBMISSION
+  CODE_RUN
+  SOCRA_SESSION
+  PRACTICE
+  GRADE
+  MISCONCEPTION_DETECTOR
+  FACULTY
+}
+
+enum EvidenceType {
+  FIRST_ATTEMPT_CORRECTNESS
+  FINAL_CORRECTNESS
+  RETRY_IMPROVEMENT
+  SOCRA_USAGE
+  INTERVENTION_DEPTH
+  RECOVERY_AFTER_GUIDANCE
+  MISCONCEPTION_OBSERVED
+  PRACTICE_SUCCESS
+  TRANSFER
+}
+
+enum TopicStateLabel {
+  NEEDS_REINFORCEMENT
+  DEVELOPING
+  CONSISTENTLY_DEMONSTRATED
+}
+
+enum Trajectory {
+  IMPROVING
+  STABLE
+  NEEDS_ATTENTION
+}
+
+enum ConfidenceLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum MisconceptionSource {
+  FACULTY
+  SEEDED
+  AI_PROPOSED
+  CLUSTER_PROMOTED
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  NEEDS_REVISION
+}
+
+enum DetectionMethod {
+  RULE
+  LLM
+  FACULTY_TAGGED
+}
+
+enum PracticeItemSource {
+  FACULTY
+  CACHED_GENERATED
+  LIVE_GENERATED
+}
+
+enum PracticeItemType {
+  CODING
+  SHORT_ANSWER
+  MULTIPLE_CHOICE
+  TRACE
+  EXPLAIN
+}
+
+enum PracticeSessionStatus {
+  ACTIVE
+  COMPLETED
+  ABANDONED
+}
+
+enum EventStatus {
+  ACCEPTED
+  /// Failed ingestion validation (e.g. missing assignmentVersion where required). Never consumed.
+  QUARANTINED
+}
+
+enum OutboxStatus {
+  PENDING
+  PROCESSING
+  PROCESSED
+  FAILED
+  QUARANTINED
+}
+
+enum StudyCondition {
+  CONTROL
+  UNRESTRICTED_AI
+  SOCRATIC_AI
+}
+
+enum ConsentStatus {
+  NOT_ASKED
+  CONSENTED
+  DECLINED
+  WITHDRAWN
+}
+
+enum ExportFormat {
+  CSV
+  JSON
+  JSONL
+}
+
+enum ExportStatus {
+  REQUESTED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum DatasetPurpose {
+  RESEARCH
+  TRAINING
+  EVALUATION
+}
+
+enum DatasetStatus {
+  DRAFT
+  FROZEN
+  EXPORTED
+  RETIRED
+}
+
+enum TrainingSourceType {
+  EXPERT_DEMONSTRATION
+  LEAKAGE_PREFERENCE_PAIR
+  MISCONCEPTION_LABEL
+  FACULTY_AUTHORING_EXAMPLE
+  SYNTHETIC_ADVERSARIAL
+  AI_MESSAGE
+  OTHER
+}
+
+enum DatasetSplit {
+  UNASSIGNED
+  TRAIN
+  VALIDATION
+  TEST
+}
+
+enum FlagScope {
+  ENVIRONMENT
+  COURSE
+}
+
+enum RetentionAction {
+  DELETE
+  DEIDENTIFY
+  ARCHIVE
+  KEEP
+}
+
+enum RosterImportStatus {
+  UPLOADED
+  VALIDATED
+  APPLIED
+  FAILED
+}
+
+enum RosterRowStatus {
+  VALID
+  DUPLICATE
+  INVALID
+  APPLIED
+  SKIPPED
+}
+
+enum RosterRowAction {
+  CREATE_USER
+  ADD_MEMBERSHIP
+  UPDATE_MEMBERSHIP
+  NONE
+}
+
+// ---------------------------------------------------------------------------
+// Identity plane
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String
+  /// Global roles. A user may hold several (e.g. INSTRUCTOR + RESEARCH_ADMIN).
+  roles         Role[]    @default([STUDENT])
+  isActive      Boolean   @default(true)
+  deactivatedAt DateTime?
+  lastLoginAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  identities          AuthIdentity[]
+  sessions            Session[]
+  memberships         CourseMembership[]
+  privilegedGrants    PrivilegedAccessGrant[]     @relation("GrantHolder")
+  grantsIssued        PrivilegedAccessGrant[]     @relation("GrantIssuer")
+  drafts              Draft[]
+  codeRuns            CodeRun[]
+  submissions         Submission[]
+  gradesGiven         Grade[]                     @relation("Grader")
+  gradeOverrides      GradeOverrideAudit[]
+  progress            AssignmentProgress[]
+  aiSessions          AiSession[]
+  learningEvidence    LearningEvidence[]
+  topicStates         LearnerTopicState[]
+  misconceptionObs    MisconceptionObservation[]
+  practiceSessions    PracticeSession[]
+  practiceAttempts    PracticeItemAttempt[]
+  studyParticipations StudyParticipant[]
+  researchMapping     ResearchParticipantMapping?
+  assignmentsCreated  Assignment[]                @relation("AssignmentCreator")
+  auditLogs           AuditLog[]
+  researchExports     ResearchExport[]            @relation("ExportRequester")
+  transcriptAccesses  TranscriptAccessLog[]       @relation("TranscriptAccessor")
+  rosterImports       RosterImport[]
+  escalations         SocraEscalation[]           @relation("EscalationStudent")
+}
+
+model AuthIdentity {
+  id           String       @id @default(cuid())
+  userId       String
+  provider     AuthProvider
+  /// "local" for LOCAL; the OIDC issuer URL for OIDC.
+  issuer       String       @default("local")
+  /// Lower-cased email for LOCAL; the institutional `sub` claim for OIDC.
+  subject      String
+  /// bcrypt hash; LOCAL only. Never selected outside src/server/auth.
+  passwordHash String?
+  createdAt    DateTime     @default(now())
+  lastUsedAt   DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, issuer, subject])
+  @@index([userId])
+}
+
+model Session {
+  id         String       @id @default(cuid())
+  /// SHA-256 (hex) of the random cookie token. The raw token is never stored.
+  tokenHash  String       @unique
+  userId     String
+  expiresAt  DateTime
+  createdAt  DateTime     @default(now())
+  lastSeenAt DateTime     @default(now())
+  revokedAt  DateTime?
+  userAgent  String?
+  ip         String?
+  /// Auth provider used to create this session.
+  provider   AuthProvider @default(LOCAL)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/// Explicit, reasoned, expiring grant for permissions no role implies (e.g. raw transcript reads).
+model PrivilegedAccessGrant {
+  id                String               @id @default(cuid())
+  userId            String
+  permission        PrivilegedPermission
+  reason            String
+  /// IRB / protocol / incident reference authorizing the grant.
+  protocolReference String?
+  grantedById       String
+  grantedAt         DateTime             @default(now())
+  expiresAt         DateTime
+  revokedAt         DateTime?
+
+  user      User @relation("GrantHolder", fields: [userId], references: [id], onDelete: Cascade)
+  grantedBy User @relation("GrantIssuer", fields: [grantedById], references: [id])
+
+  @@index([userId, permission])
+}
+
+// ---------------------------------------------------------------------------
+// Course plane
+// ---------------------------------------------------------------------------
+
+model Course {
+  id          String                @id @default(cuid())
+  /// e.g. "CSE 115"
+  code        String
+  title       String
+  /// e.g. "Fall 2026"
+  term        String
+  description String?
+  languages   ProgrammingLanguage[]
+  timezone    String                @default("America/New_York")
+  isActive    Boolean               @default(true)
+  archivedAt  DateTime?
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  sections           CourseSection[]
+  memberships        CourseMembership[]
+  topics             Topic[]
+  learningObjectives LearningObjective[]
+  resources          CourseResource[]
+  assignments        Assignment[]
+  socraPolicies      SocraPolicy[]
+  misconceptions     Misconception[]
+  practiceItems      PracticeItem[]
+  practiceSessions   PracticeSession[]
+  aiSessions         AiSession[]
+  featureFlags       FeatureFlag[]
+  studyParticipants  StudyParticipant[]
+  aiBudget           CourseAiBudget?
+  rosterImports      RosterImport[]
+  teachingBriefs     TeachingBrief[]
+  topicStates        LearnerTopicState[]
+}
+
+model CourseSection {
+  id        String   @id @default(cuid())
+  courseId  String
+  code      String
+  name      String
+  createdAt DateTime @default(now())
+
+  course      Course             @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  memberships CourseMembership[]
+
+  @@unique([courseId, code])
+}
+
+model CourseMembership {
+  id        String           @id @default(cuid())
+  userId    String
+  courseId  String
+  sectionId String?
+  role      CourseRole
+  status    MembershipStatus @default(ACTIVE)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course  Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  section CourseSection? @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, courseId])
+  @@index([courseId, role, status])
+}
+
+model Topic {
+  id          String   @id @default(cuid())
+  courseId    String
+  /// Stable slug, e.g. "recursion-base-cases". Unique per course.
+  key         String
+  name        String
+  description String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course           Course                     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  outgoing         TopicRelationship[]        @relation("TopicFrom")
+  incoming         TopicRelationship[]        @relation("TopicTo")
+  objectives       LearningObjectiveTopic[]
+  resources        CourseResourceTopic[]
+  questions        QuestionTopic[]
+  assignments      AssignmentTopic[]
+  misconceptions   Misconception[]
+  misconceptionObs MisconceptionObservation[]
+  evidence         LearningEvidence[]
+  learnerStates    LearnerTopicState[]
+  practiceItems    PracticeItem[]
+  practiceSessions PracticeSession[]
+
+  @@unique([courseId, key])
+}
+
+/// Directed edge: fromTopic <type> toTopic, e.g. "recursion-base-cases" PREREQUISITE_OF "recursion".
+model TopicRelationship {
+  id          String            @id @default(cuid())
+  fromTopicId String
+  toTopicId   String
+  type        TopicRelationType
+  weight      Float             @default(1)
+  createdAt   DateTime          @default(now())
+
+  fromTopic Topic @relation("TopicFrom", fields: [fromTopicId], references: [id], onDelete: Cascade)
+  toTopic   Topic @relation("TopicTo", fields: [toTopicId], references: [id], onDelete: Cascade)
+
+  @@unique([fromTopicId, toTopicId, type])
+  @@index([toTopicId])
+}
+
+model LearningObjective {
+  id          String   @id @default(cuid())
+  courseId    String
+  /// e.g. "LO-REC-1"
+  code        String
+  description String
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course      Course                        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topics      LearningObjectiveTopic[]
+  assignments AssignmentLearningObjective[]
+
+  @@unique([courseId, code])
+}
+
+model LearningObjectiveTopic {
+  objectiveId String
+  topicId     String
+
+  objective LearningObjective @relation(fields: [objectiveId], references: [id], onDelete: Cascade)
+  topic     Topic             @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([objectiveId, topicId])
+  @@index([topicId])
+}
+
+model CourseResource {
+  id           String              @id @default(cuid())
+  courseId     String
+  title        String
+  type         ResourceType
+  status       ResourceStatus      @default(PENDING)
+  accessScope  ResourceAccessScope @default(COURSE_ALL)
+  /// Incremented on content change; chunks carry the version they were built from.
+  version      Int                 @default(1)
+  /// Storage key (local path or S3 key) of the original upload, if any.
+  storageKey   String?
+  sourceUrl    String?
+  mimeType     String?
+  /// Extracted plain text used for chunking.
+  textContent  String?
+  contentHash  String?
+  metadata     Json?
+  errorMessage String?
+  uploadedById String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  course      Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topics      CourseResourceTopic[]
+  chunks      ResourceChunk[]
+  assignments AssignmentResource[]
+  citations   RetrievalCitation[]
+
+  @@index([courseId, status, accessScope])
+}
+
+model CourseResourceTopic {
+  resourceId String
+  topicId    String
+
+  resource CourseResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  topic    Topic          @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([resourceId, topicId])
+  @@index([topicId])
+}
+
+/// Retrieval unit. `embedding` (vector(1536)) and `searchVector` (tsvector, trigger-maintained) are
+/// read/written with raw SQL only. Every vector points to its source resource + sourceVersion.
+model ResourceChunk {
+  id             String                       @id @default(cuid())
+  resourceId     String
+  /// Denormalized for course-scoped retrieval filters.
+  courseId       String
+  sourceVersion  Int
+  chunkIndex     Int
+  content        String
+  tokenCount     Int                          @default(0)
+  headingPath    String?
+  embedding      Unsupported("vector(1536)")?
+  embeddingModel String?
+  embeddedAt     DateTime?
+  searchVector   Unsupported("tsvector")?
+  createdAt      DateTime                     @default(now())
+
+  resource  CourseResource      @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  citations RetrievalCitation[]
+
+  @@unique([resourceId, sourceVersion, chunkIndex])
+  @@index([courseId])
+  @@index([searchVector], map: "ResourceChunk_searchVector_gin_idx", type: Gin)
+}
+
+// ---------------------------------------------------------------------------
+// Assignment plane
+// ---------------------------------------------------------------------------
+
+model Assignment {
+  id                  String               @id @default(cuid())
+  courseId            String
+  title               String
+  description         String               @default("")
+  format              AssignmentFormat
+  /// Primary language for CODING assignments.
+  language            ProgrammingLanguage?
+  state               AssignmentState      @default(DRAFT)
+  openAt              DateTime?
+  dueAt               DateTime?
+  closeAt             DateTime?
+  /// null = unlimited.
+  attemptLimit        Int?
+  allowResubmission   Boolean              @default(true)
+  totalPoints         Float                @default(0)
+  solutionReleaseMode SolutionReleaseMode  @default(MANUAL)
+  solutionsReleased   Boolean              @default(false)
+  solutionsReleasedAt DateTime?
+  resourceScope       ResourceScopeMode    @default(ALL_COURSE_RESOURCES)
+  /// Points at the published (immutable) AssignmentVersion students see.
+  currentVersionId    String?              @unique
+  socraPolicyId       String?
+  aiGenerated         Boolean              @default(false)
+  createdById         String
+  publishedAt         DateTime?
+  closedAt            DateTime?
+  archivedAt          DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  course         Course                        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  createdBy      User                          @relation("AssignmentCreator", fields: [createdById], references: [id])
+  currentVersion AssignmentVersion?            @relation("CurrentAssignmentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  socraPolicy    SocraPolicy?                  @relation("AssignmentPolicy", fields: [socraPolicyId], references: [id], onDelete: SetNull)
+  versions       AssignmentVersion[]           @relation("AssignmentVersions")
+  questions      Question[]
+  topics         AssignmentTopic[]
+  objectives     AssignmentLearningObjective[]
+  resources      AssignmentResource[]
+  rubrics        Rubric[]
+  drafts         Draft[]
+  codeRuns       CodeRun[]
+  submissions    Submission[]
+  progress       AssignmentProgress[]
+  aiSessions     AiSession[]
+  suggestions    AuthoringSuggestion[]
+
+  @@index([courseId, state])
+  @@index([state, closeAt])
+}
+
+/// Immutable snapshot of an assignment at publish time (assignment + questions + versions + policy version).
+model AssignmentVersion {
+  id              String    @id @default(cuid())
+  assignmentId    String
+  version         Int
+  /// Full JSON snapshot (student-safe and staff fields, incl. question version ids). Never mutated.
+  snapshot        Json
+  snapshotHash    String
+  /// SocraPolicyVersion id in force for this version.
+  policyVersionId String?
+  changeNote      String?
+  createdById     String
+  createdAt       DateTime  @default(now())
+  publishedAt     DateTime?
+
+  assignment  Assignment   @relation("AssignmentVersions", fields: [assignmentId], references: [id], onDelete: Cascade)
+  currentFor  Assignment?  @relation("CurrentAssignmentVersion")
+  submissions Submission[]
+
+  @@unique([assignmentId, version])
+}
+
+model AssignmentTopic {
+  assignmentId String
+  topicId      String
+
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  topic      Topic      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, topicId])
+  @@index([topicId])
+}
+
+model AssignmentLearningObjective {
+  assignmentId String
+  objectiveId  String
+
+  assignment Assignment        @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  objective  LearningObjective @relation(fields: [objectiveId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, objectiveId])
+}
+
+/// Resources selected for an assignment when resourceScope = SELECTED_RESOURCES (or ASSIGNMENT_SCOPED resources).
+model AssignmentResource {
+  assignmentId String
+  resourceId   String
+
+  assignment Assignment     @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  resource   CourseResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@id([assignmentId, resourceId])
+}
+
+model Question {
+  id               String   @id @default(cuid())
+  assignmentId     String
+  order            Int      @default(0)
+  /// Latest version (editable while the assignment is DRAFT; frozen into AssignmentVersion on publish).
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  assignment     Assignment         @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  currentVersion QuestionVersion?   @relation("CurrentQuestionVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions       QuestionVersion[]  @relation("QuestionVersions")
+  topics         QuestionTopic[]
+  rubrics        Rubric[]
+  drafts         Draft[]
+  codeRuns       CodeRun[]
+  answers        SubmissionAnswer[]
+  grades         Grade[]
+  aiSessions     AiSession[]
+
+  @@index([assignmentId, order])
+}
+
+model QuestionVersion {
+  id                String               @id @default(cuid())
+  questionId        String
+  version           Int
+  title             String
+  /// Student-visible prompt (markdown).
+  prompt            String
+  type              QuestionType
+  points            Float                @default(0)
+  language          ProgrammingLanguage?
+  starterCode       String?
+  /// Entry point / function name the harness calls, if any.
+  entryPoint        String?
+  /// SERVER-ONLY. Never in student DTOs or student-mode AI context (allowed in POST_ASSESSMENT_REVIEW once released).
+  referenceSolution String?
+  /// MULTIPLE_CHOICE options (student-safe).
+  choices           Json?
+  /// SERVER-ONLY answer key for QUIZ/short answer.
+  answerKey         Json?
+  difficulty        Int                  @default(2)
+  createdById       String?
+  createdAt         DateTime             @default(now())
+
+  question   Question           @relation("QuestionVersions", fields: [questionId], references: [id], onDelete: Cascade)
+  currentFor Question?          @relation("CurrentQuestionVersion")
+  testCases  TestCase[]
+  scaffold   ScaffoldStage[]
+  answers    SubmissionAnswer[]
+
+  @@unique([questionId, version])
+}
+
+model QuestionTopic {
+  questionId String
+  topicId    String
+  /// Relative weight of this topic for evidence attribution (0..1].
+  weight     Float  @default(1)
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  topic    Topic    @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@id([questionId, topicId])
+  @@index([topicId])
+}
+
+model Rubric {
+  id           String   @id @default(cuid())
+  assignmentId String?
+  questionId   String?
+  title        String
+  version      Int      @default(1)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignment Assignment?       @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  question   Question?         @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  criteria   RubricCriterion[]
+  grades     Grade[]
+
+  @@index([assignmentId])
+  @@index([questionId])
+}
+
+model RubricCriterion {
+  id          String @id @default(cuid())
+  rubricId    String
+  order       Int    @default(0)
+  title       String
+  description String @default("")
+  maxPoints   Float
+  /// Optional performance levels: [{ label, points, description }]
+  levels      Json?
+
+  rubric Rubric @relation(fields: [rubricId], references: [id], onDelete: Cascade)
+
+  @@index([rubricId])
+}
+
+/// Harness spec contract (JSON): see src/server/runner/types.ts `TestSpec`.
+model TestCase {
+  id                String         @id @default(cuid())
+  questionVersionId String
+  name              String
+  visibility        TestVisibility
+  weight            Float          @default(1)
+  order             Int            @default(0)
+  /// { args?: unknown[], stdin?: string, ... }
+  input             Json
+  /// { returns?: unknown, stdout?: string, ... }
+  expected          Json
+  /// Optional custom harness / comparator config.
+  harness           Json?
+  timeoutMs         Int?
+  /// Optional student-facing hint for failing PUBLIC tests.
+  failureHint       String?
+  createdAt         DateTime       @default(now())
+
+  questionVersion QuestionVersion @relation(fields: [questionVersionId], references: [id], onDelete: Cascade)
+
+  @@index([questionVersionId, visibility])
+}
+
+model ScaffoldStage {
+  id                String  @id @default(cuid())
+  questionVersionId String
+  order             Int
+  title             String
+  instructions      String
+  hint              String?
+
+  questionVersion QuestionVersion @relation(fields: [questionVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionVersionId, order])
+}
+
+/// Socra protected-assistance policy lineage; content lives in immutable SocraPolicyVersion rows.
+model SocraPolicy {
+  id               String   @id @default(cuid())
+  courseId         String
+  name             String
+  currentVersionId String?  @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  course         Course               @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  currentVersion SocraPolicyVersion?  @relation("CurrentPolicyVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions       SocraPolicyVersion[] @relation("PolicyVersions")
+  assignments    Assignment[]         @relation("AssignmentPolicy")
+}
+
+model SocraPolicyVersion {
+  id                     String   @id @default(cuid())
+  policyId               String
+  version                Int
+  /// 0..6 (L0 Orientation .. L6 Escalation).
+  maxInterventionLevel   Int      @default(5)
+  /// Ordered hint ladder: [{ level, guidance }]
+  hintLadder             Json
+  /// Behaviors explicitly allowed (strings / structured rules).
+  allowedBehaviors       Json
+  /// Behaviors explicitly forbidden.
+  forbiddenBehaviors     Json
+  /// Whether mechanical syntax fixes may be given directly.
+  allowDirectSyntaxHelp  Boolean  @default(true)
+  allowResourceRetrieval Boolean  @default(true)
+  /// Per-session student turn cap (null = env default).
+  maxTurnsPerSession     Int?
+  /// Per-student daily turn cap for this assignment (null = env default).
+  maxTurnsPerDay         Int?
+  escalationMessage      String?
+  notes                  String?
+  createdById            String?
+  createdAt              DateTime @default(now())
+
+  policy     SocraPolicy  @relation("PolicyVersions", fields: [policyId], references: [id], onDelete: Cascade)
+  currentFor SocraPolicy? @relation("CurrentPolicyVersion")
+
+  @@unique([policyId, version])
+}
+
+// ---------------------------------------------------------------------------
+// Student work plane
+// ---------------------------------------------------------------------------
+
+/// Autosaved working copy (one per student per question). Optimistic concurrency via `version`.
+model Draft {
+  id              String               @id @default(cuid())
+  userId          String
+  assignmentId    String
+  questionId      String
+  content         String
+  language        ProgrammingLanguage?
+  version         Int                  @default(1)
+  contentHash     String?
+  clientUpdatedAt DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  question   Question   @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, questionId])
+  @@index([assignmentId])
+}
+
+/// Execution snapshot. `testResults` holds PUBLIC test results only; hidden results live on Grade.gradingResults.
+model CodeRun {
+  id             String              @id @default(cuid())
+  userId         String
+  courseId       String
+  assignmentId   String?
+  questionId     String?
+  practiceItemId String?
+  submissionId   String?
+  kind           CodeRunKind         @default(RUN)
+  language       ProgrammingLanguage
+  status         CodeRunStatus       @default(QUEUED)
+  codeSnapshot   String
+  codeHash       String
+  stdin          String?
+  stdout         String?
+  stderr         String?
+  exitCode       Int?
+  durationMs     Int?
+  testResults    Json?
+  testsPassed    Int?
+  testsTotal     Int?
+  /// "docker" | "remote" | ...
+  runnerDriver   String?
+  /// Platform vs student failure classification (e.g. STUDENT_RUNTIME, PLATFORM_DOCKER_UNAVAILABLE).
+  errorClass     String?
+  jobId          String?
+  draftVersion   Int?
+  queuedAt       DateTime            @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignment Assignment? @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  question   Question?   @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  submission Submission? @relation(fields: [submissionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, questionId, queuedAt])
+  @@index([assignmentId])
+  @@index([status])
+}
+
+/// Immutable submitted snapshot. Never updated except status transitions.
+model Submission {
+  id                  String           @id @default(cuid())
+  userId              String
+  assignmentId        String
+  assignmentVersionId String
+  courseId            String
+  attemptNumber       Int
+  /// Client-generated key; duplicate POSTs return the original submission.
+  idempotencyKey      String           @unique
+  status              SubmissionStatus @default(RECEIVED)
+  /// Full snapshot: { answers: [{ questionId, questionVersionId, content, language }] , files? }
+  snapshot            Json
+  snapshotHash        String
+  publicTestSummary   Json?
+  researchCondition   StudyCondition?
+  /// SocraPolicyVersion.version in force at submission time.
+  policyVersion       Int?
+  clientVersion       String?
+  isLate              Boolean          @default(false)
+  submittedAt         DateTime         @default(now())
+  gradedAt            DateTime?
+  returnedAt          DateTime?
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignment        Assignment         @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+  assignmentVersion AssignmentVersion  @relation(fields: [assignmentVersionId], references: [id])
+  answers           SubmissionAnswer[]
+  grades            Grade[]
+  codeRuns          CodeRun[]
+
+  @@unique([userId, assignmentId, attemptNumber])
+  @@index([assignmentId, submittedAt])
+}
+
+model SubmissionAnswer {
+  id                String               @id @default(cuid())
+  submissionId      String
+  questionId        String
+  questionVersionId String
+  content           String
+  language          ProgrammingLanguage?
+  contentHash       String
+
+  submission      Submission      @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  question        Question        @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  questionVersion QuestionVersion @relation(fields: [questionVersionId], references: [id])
+
+  @@unique([submissionId, questionId])
+}
+
+/// One row per submission (scope SUBMISSION, scopeKey "overall") and per question (scope QUESTION, scopeKey = questionId).
+model Grade {
+  id              String        @id @default(cuid())
+  submissionId    String
+  questionId      String?
+  scope           GradeScope
+  scopeKey        String
+  rawPoints       Float?
+  maxPoints       Float
+  method          GradingMethod
+  graderType      GraderType
+  status          GradeStatus   @default(PENDING)
+  /// AI suggestion (never authoritative): { score, criterionScores, feedback, model, promptVersion, aiRequestId }
+  aiSuggestion    Json?
+  facultyOverride Float?
+  finalScore      Float?
+  feedback        String?
+  criterionScores Json?
+  testsPassed     Int?
+  testsTotal      Int?
+  /// SERVER-ONLY: full grading results incl. hidden tests.
+  gradingResults  Json?
+  rubricId        String?
+  rubricVersion   Int?
+  graderId        String?
+  gradedAt        DateTime?
+  releasedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  submission Submission           @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  question   Question?            @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  rubric     Rubric?              @relation(fields: [rubricId], references: [id], onDelete: SetNull)
+  grader     User?                @relation("Grader", fields: [graderId], references: [id], onDelete: SetNull)
+  overrides  GradeOverrideAudit[]
+
+  @@unique([submissionId, scopeKey])
+  @@index([status])
+}
+
+model GradeOverrideAudit {
+  id            String   @id @default(cuid())
+  gradeId       String
+  actorId       String
+  previousScore Float?
+  newScore      Float
+  reason        String
+  createdAt     DateTime @default(now())
+
+  grade Grade @relation(fields: [gradeId], references: [id], onDelete: Cascade)
+  actor User  @relation(fields: [actorId], references: [id])
+
+  @@index([gradeId])
+}
+
+/// Per-student status for an assignment (SUBMITTED/RETURNED are per student, not assignment states).
+model AssignmentProgress {
+  id                 String         @id @default(cuid())
+  userId             String
+  assignmentId       String
+  status             ProgressStatus @default(NOT_STARTED)
+  attemptsUsed       Int            @default(0)
+  latestSubmissionId String?
+  firstOpenedAt      DateTime?
+  lastActivityAt     DateTime?
+  submittedAt        DateTime?
+  returnedAt         DateTime?
+  updatedAt          DateTime       @updatedAt
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assignment Assignment @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, assignmentId])
+  @@index([assignmentId, status])
+}
+
+// ---------------------------------------------------------------------------
+// AI / conversation plane (raw content is SENSITIVE_CONVERSATION; analytics never selects it)
+// ---------------------------------------------------------------------------
+
+model AiSession {
+  id                   String          @id @default(cuid())
+  userId               String
+  courseId             String
+  mode                 AiMode
+  assignmentId         String?
+  questionId           String?
+  practiceSessionId    String?         @unique
+  /// AssignmentVersion.version / SocraPolicyVersion.version in force when the session started.
+  assignmentVersion    Int?
+  policyVersion        Int?
+  researchCondition    StudyCondition?
+  status               AiSessionStatus @default(ACTIVE)
+  /// Highest intervention level reached (0..6).
+  maxInterventionLevel Int             @default(0)
+  turnCount            Int             @default(0)
+  inputTokens          Int             @default(0)
+  outputTokens         Int             @default(0)
+  costUsd              Decimal         @default(0) @db.Decimal(12, 6)
+  /// Rolling summary of older turns (sensitive conversation content).
+  summary              String?
+  retentionClass       RetentionClass  @default(SENSITIVE_CONVERSATION)
+  startedAt            DateTime        @default(now())
+  lastActivityAt       DateTime        @default(now())
+  endedAt              DateTime?
+
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course          Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  assignment      Assignment?           @relation(fields: [assignmentId], references: [id], onDelete: SetNull)
+  question        Question?             @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  practiceSession PracticeSession?      @relation(fields: [practiceSessionId], references: [id], onDelete: SetNull)
+  messages        AiMessage[]
+  requests        AiRequest[]
+  decisions       PolicyDecision[]
+  citations       RetrievalCitation[]
+  accessLogs      TranscriptAccessLog[]
+  escalations     SocraEscalation[]
+
+  @@index([userId, assignmentId, startedAt])
+  @@index([courseId, mode, startedAt])
+}
+
+model AiMessage {
+  id                String         @id @default(cuid())
+  sessionId         String
+  role              AiMessageRole
+  /// RAW conversation text. Only conversation-domain code and audited privileged endpoints may select it.
+  content           String
+  /// Assistant turns: assigned intervention level 0..6.
+  interventionLevel Int?
+  /// Assistant turns: { citations, policyOutcome, ... } (no hidden-test data).
+  metadata          Json?
+  aiRequestId       String?        @unique
+  retentionClass    RetentionClass @default(SENSITIVE_CONVERSATION)
+  redactedAt        DateTime?
+  createdAt         DateTime       @default(now())
+
+  session   AiSession           @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  request   AiRequest?          @relation(fields: [aiRequestId], references: [id], onDelete: SetNull)
+  citations RetrievalCitation[]
+  decisions PolicyDecision[]
+
+  @@index([sessionId, createdAt])
+}
+
+/// One row per provider call (or blocked attempt). Usage/cost metadata only — never prompt/response text.
+model AiRequest {
+  id                    String          @id @default(cuid())
+  sessionId             String?
+  userId                String?
+  courseId              String?
+  assignmentId          String?
+  questionId            String?
+  mode                  AiMode
+  /// Gateway task, e.g. "socratic_turn", "practice_generation", "misconception_extraction", "grading_suggestion".
+  task                  String
+  provider              AiProviderName
+  /// Exact provider model id/snapshot (not marketing alias).
+  model                 String
+  providerRequestId     String?
+  traceId               String
+  promptTemplateId      String?
+  promptVersion         String
+  policyVersion         String?
+  assignmentVersion     Int?
+  questionVersion       Int?
+  researchCondition     StudyCondition?
+  status                AiRequestStatus @default(PENDING)
+  errorClass            AiErrorClass?
+  errorMessage          String?
+  latencyMs             Int?
+  firstTokenMs          Int?
+  inputTokens           Int             @default(0)
+  cachedTokens          Int             @default(0)
+  outputTokens          Int             @default(0)
+  /// Count only; reasoning content is never stored.
+  reasoningTokens       Int             @default(0)
+  costUsd               Decimal         @default(0) @db.Decimal(12, 6)
+  appVersion            String
+  retrievedResourceIds  String[]        @default([])
+  structuredOutputValid Boolean?
+  retryCount            Int             @default(0)
+  fallbackUsed          Boolean         @default(false)
+  routingReason         String?
+  retentionClass        RetentionClass  @default(AI_REQUEST_LOG)
+  createdAt             DateTime        @default(now())
+  completedAt           DateTime?
+
+  session   AiSession?          @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+  message   AiMessage?
+  decisions PolicyDecision[]
+  citations RetrievalCitation[]
+
+  @@index([courseId, createdAt])
+  @@index([userId, createdAt])
+  @@index([mode, status, createdAt])
+}
+
+/// Output policy-check result for an AI response (rule checks and/or adjudication).
+model PolicyDecision {
+  id                String        @id @default(cuid())
+  sessionId         String?
+  aiRequestId       String?
+  messageId         String?
+  mode              AiMode
+  policyVersion     String
+  /// "rules-v1", "llm-adjudicator-v1", ...
+  checker           String
+  outcome           PolicyOutcome
+  /// [{ check, passed, detail }]
+  checks            Json
+  reasons           String[]      @default([])
+  interventionLevel Int?
+  createdAt         DateTime      @default(now())
+
+  session AiSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  request AiRequest? @relation(fields: [aiRequestId], references: [id], onDelete: SetNull)
+  message AiMessage? @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
+  @@index([outcome, createdAt])
+}
+
+model PromptVersion {
+  id          String   @id @default(cuid())
+  /// e.g. "protected-socratic"
+  templateId  String
+  /// e.g. "protected-v1"
+  version     String
+  mode        AiMode
+  content     String
+  contentHash String
+  isActive    Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  @@unique([templateId, version])
+  @@index([mode, isActive])
+}
+
+/// Model routing per gateway task (scopeKey "global" or "course:<id>").
+model ModelConfiguration {
+  id                    String         @id @default(cuid())
+  /// Gateway task or mode key, e.g. "PROTECTED_ASSESSMENT", "practice_generation", "embedding".
+  key                   String
+  scopeKey              String         @default("global")
+  courseId              String?
+  provider              AiProviderName @default(OPENAI)
+  model                 String
+  temperature           Float?
+  maxOutputTokens       Int?
+  reasoningEffort       String?
+  inputPricePer1M       Decimal        @db.Decimal(10, 4)
+  cachedInputPricePer1M Decimal        @db.Decimal(10, 4)
+  outputPricePer1M      Decimal        @db.Decimal(10, 4)
+  isActive              Boolean        @default(true)
+  notes                 String?
+  updatedById           String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@unique([key, scopeKey])
+}
+
+model CourseAiBudget {
+  id                String   @id @default(cuid())
+  courseId          String   @unique
+  /// Budget for the configured period (USD).
+  budgetUsd         Decimal  @db.Decimal(12, 2)
+  periodStart       DateTime
+  periodEnd         DateTime
+  alertThresholdPct Int      @default(80)
+  /// When true, student AI calls are refused (not degraded) once the budget is exhausted.
+  hardStop          Boolean  @default(true)
+  aiDisabled        Boolean  @default(false)
+  updatedById       String?
+  updatedAt         DateTime @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+model RetrievalCitation {
+  id              String          @id @default(cuid())
+  sessionId       String?
+  aiRequestId     String?
+  messageId       String?
+  resourceId      String
+  chunkId         String?
+  resourceVersion Int
+  rank            Int
+  score           Float
+  method          RetrievalMethod
+  embeddingModel  String?
+  createdAt       DateTime        @default(now())
+
+  session  AiSession?     @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  request  AiRequest?     @relation(fields: [aiRequestId], references: [id], onDelete: SetNull)
+  message  AiMessage?     @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  resource CourseResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+  chunk    ResourceChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@index([resourceId])
+  @@index([sessionId])
+}
+
+/// Every privileged raw-transcript read (who, whose, why, under which grant).
+model TranscriptAccessLog {
+  id           String   @id @default(cuid())
+  accessorId   String
+  sessionId    String
+  targetUserId String
+  grantId      String?
+  reason       String
+  ip           String?
+  accessedAt   DateTime @default(now())
+
+  accessor User      @relation("TranscriptAccessor", fields: [accessorId], references: [id])
+  session  AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([accessorId, accessedAt])
+  @@index([targetUserId])
+}
+
+/// L6 escalation to course staff. Carries a student-authored note only, never the transcript.
+model SocraEscalation {
+  id           String           @id @default(cuid())
+  sessionId    String
+  studentId    String
+  courseId     String
+  assignmentId String?
+  questionId   String?
+  note         String?
+  status       EscalationStatus @default(OPEN)
+  resolvedById String?
+  createdAt    DateTime         @default(now())
+  resolvedAt   DateTime?
+
+  session AiSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student User      @relation("EscalationStudent", fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, status])
+}
+
+/// Faculty AI authoring output awaiting human review. Nothing publishes automatically.
+model AuthoringSuggestion {
+  id           String           @id @default(cuid())
+  courseId     String
+  assignmentId String?
+  /// "question" | "scaffold" | "misconceptions" | "objectives" | "rubric" | "public_tests" | "hidden_tests" | "hint_ladder" | "topics" | "full_assignment"
+  kind         String
+  input        Json
+  content      Json
+  aiRequestId  String?
+  status       SuggestionStatus @default(PENDING)
+  createdById  String
+  createdAt    DateTime         @default(now())
+  resolvedAt   DateTime?
+
+  assignment Assignment? @relation(fields: [assignmentId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, createdAt])
+}
+
+/// Weekly AI teaching brief. `metricsSnapshot` is the exact computed payload the model summarized.
+model TeachingBrief {
+  id              String   @id @default(cuid())
+  courseId        String
+  weekStart       DateTime
+  content         String
+  metricsSnapshot Json
+  aiRequestId     String?
+  createdById     String?
+  createdAt       DateTime @default(now())
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([courseId, weekStart])
+}
+
+// ---------------------------------------------------------------------------
+// Learning plane
+// ---------------------------------------------------------------------------
+
+/// Append-only normalized observation (DB trigger forbids UPDATE except invalidation fields, and DELETE
+/// outside retention purges). LearnerTopicState is always recomputable from non-invalidated rows.
+model LearningEvidence {
+  id                   String             @id @default(cuid())
+  userId               String
+  courseId             String
+  topicId              String
+  assignmentId         String?
+  assignmentVersion    Int?
+  questionId           String?
+  questionVersion      Int?
+  practiceItemId       String?
+  aiSessionId          String?
+  sourceType           EvidenceSourceType
+  sourceId             String?
+  evidenceType         EvidenceType
+  /// Normalized 0..1 (e.g. correctness 1/0, intervention depth level/6).
+  value                Float
+  /// Raw typed value, e.g. { correct: true } or { hintDepth: 4 }.
+  rawValue             Json?
+  /// Policy/estimator contribution weight.
+  weight               Float              @default(1)
+  assisted             Boolean            @default(false)
+  maxInterventionLevel Int?
+  difficulty           Int?
+  attemptNumber        Int?
+  confidence           Float              @default(1)
+  modelVersion         String?
+  detectorVersion      String?
+  policyVersion        String?
+  researchCondition    StudyCondition?
+  /// Primary source event (AnalyticsEvent.id). Lineage list in sourceEventIds.
+  sourceEventId        String?
+  sourceEventIds       String[]           @default([])
+  /// Deterministic key, e.g. "<sourceEventId>:<topicId>:<evidenceType>" — makes replays no-ops.
+  idempotencyKey       String             @unique
+  occurredAt           DateTime
+  recordedAt           DateTime           @default(now())
+  invalidatedAt        DateTime?
+  invalidationReason   String?
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic Topic @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@index([userId, topicId, occurredAt])
+  @@index([courseId, topicId])
+  @@index([assignmentId])
+  @@index([questionId])
+  @@index([sourceEventId])
+}
+
+/// Derived, recomputable estimate per student-topic. Never a permanent ability label.
+model LearnerTopicState {
+  id                   String          @id @default(cuid())
+  userId               String
+  courseId             String
+  topicId              String
+  state                TopicStateLabel
+  /// Internal 0..1 proficiency estimate (not displayed as a percentage).
+  score                Float
+  trajectory           Trajectory      @default(STABLE)
+  evidenceCount        Int             @default(0)
+  confidence           ConfidenceLevel @default(LOW)
+  confidenceScore      Float           @default(0)
+  assistanceDependency Float?
+  firstAttemptRate     Float?
+  lastEvidenceAt       DateTime?
+  lastDemonstratedAt   DateTime?
+  /// Human-readable most common difficulty (e.g. top misconception label).
+  commonDifficulty     String?
+  /// { misconceptionKey: share }
+  misconceptionSummary Json?
+  /// Human-readable "why" for the student view.
+  explanation          String?
+  /// Estimator version, e.g. "topic-state-v1".
+  algorithmVersion     String
+  /// Evidence cutoff used for this computation (as-of).
+  computedAsOf         DateTime        @default(now())
+  createdAt            DateTime        @default(now())
+  updatedAt            DateTime        @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topic  Topic  @relation(fields: [topicId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, topicId])
+  @@index([courseId, topicId, state])
+}
+
+/// Canonical misconception taxonomy entry.
+model Misconception {
+  id              String              @id @default(cuid())
+  courseId        String
+  topicId         String
+  /// Canonical slug, e.g. "base-case-missing". Unique per course.
+  key             String
+  label           String
+  description     String
+  source          MisconceptionSource @default(FACULTY)
+  reviewStatus    ReviewStatus        @default(APPROVED)
+  taxonomyVersion Int                 @default(1)
+  createdById     String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  course        Course                     @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topic         Topic                      @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  observations  MisconceptionObservation[]
+  practiceItems PracticeItem[]
+
+  @@unique([courseId, key])
+  @@index([topicId])
+}
+
+/// Probabilistic observation (detector output) — never a permanent label.
+model MisconceptionObservation {
+  id                String          @id @default(cuid())
+  userId            String
+  courseId          String
+  topicId           String
+  misconceptionId   String
+  assignmentId      String?
+  questionId        String?
+  submissionId      String?
+  codeRunId         String?
+  aiSessionId       String?
+  practiceAttemptId String?
+  confidence        Float
+  detectionMethod   DetectionMethod
+  /// e.g. "rules-v1", "llm-extractor-v1"
+  detectionVersion  String
+  /// Exact model id when detectionMethod = LLM.
+  modelVersion      String?
+  reviewStatus      ReviewStatus    @default(PENDING)
+  sourceEventId     String?
+  idempotencyKey    String          @unique
+  observedAt        DateTime
+  createdAt         DateTime        @default(now())
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topic         Topic         @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  misconception Misconception @relation(fields: [misconceptionId], references: [id], onDelete: Cascade)
+
+  @@index([courseId, misconceptionId])
+  @@index([userId, topicId])
+  @@index([assignmentId, questionId])
+}
+
+model PracticeItem {
+  id                      String                       @id @default(cuid())
+  courseId                String
+  topicId                 String
+  /// 1 (easiest) .. 5 (hardest)
+  difficulty              Int
+  type                    PracticeItemType
+  language                ProgrammingLanguage?
+  prompt                  String
+  starterCode             String?
+  /// Expected answer / reference solution (practice may reveal it).
+  answer                  String?
+  explanation             String?
+  choices                 Json?
+  rubric                  Json?
+  /// Optional public tests for CODING practice items (same TestSpec shape as TestCase).
+  tests                   Json?
+  source                  PracticeItemSource
+  reviewStatus            ReviewStatus                 @default(PENDING)
+  generationModel         String?
+  generationPromptVersion String?
+  generationRequestId     String?
+  targetedMisconceptionId String?
+  contentHash             String
+  embedding               Unsupported("vector(1536)")?
+  embeddingModel          String?
+  createdById             String?
+  approvedById            String?
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
+
+  course                Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topic                 Topic                 @relation(fields: [topicId], references: [id], onDelete: Cascade)
+  targetedMisconception Misconception?        @relation(fields: [targetedMisconceptionId], references: [id], onDelete: SetNull)
+  attempts              PracticeItemAttempt[]
+
+  @@unique([courseId, contentHash])
+  @@index([courseId, topicId, difficulty, reviewStatus])
+}
+
+model PracticeSession {
+  id                String                @id @default(cuid())
+  userId            String
+  courseId          String
+  /// Topic the student chose (null = system-recommended mix).
+  topicId           String?
+  status            PracticeSessionStatus @default(ACTIVE)
+  currentDifficulty Int                   @default(2)
+  itemsServed       Int                   @default(0)
+  correctCount      Int                   @default(0)
+  researchCondition StudyCondition?
+  startedAt         DateTime              @default(now())
+  endedAt           DateTime?
+
+  user      User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course    Course                @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  topic     Topic?                @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  attempts  PracticeItemAttempt[]
+  aiSession AiSession?
+
+  @@index([userId, startedAt])
+}
+
+model PracticeItemAttempt {
+  id                   String    @id @default(cuid())
+  sessionId            String
+  itemId               String
+  userId               String
+  answer               String?
+  isCorrect            Boolean?
+  /// 0..1
+  score                Float?
+  attemptNumber        Int       @default(1)
+  difficulty           Int
+  hintsUsed            Int       @default(0)
+  explanationRequested Boolean   @default(false)
+  assisted             Boolean   @default(false)
+  feedback             String?
+  /// "AUTO" | "AI" | "SELF"
+  gradedBy             String?
+  idempotencyKey       String?   @unique
+  shownAt              DateTime  @default(now())
+  answeredAt           DateTime?
+
+  session PracticeSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  item    PracticeItem    @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([userId, itemId])
+}
+
+// ---------------------------------------------------------------------------
+// Analytics plane: events, outbox, aggregates
+// ---------------------------------------------------------------------------
+
+/// Canonical event envelope (TASK §20 + data-pipelines §1.4). Append-only. No FKs by design.
+model AnalyticsEvent {
+  /// eventId (UUID)
+  id                String          @id
+  eventName         String
+  schemaVersion     Int             @default(1)
+  actorId           String?
+  pseudonymousId    String?
+  courseId          String?
+  sectionId         String?
+  assignmentId      String?
+  assignmentVersion Int?
+  questionId        String?
+  questionVersion   Int?
+  sessionId         String?
+  occurredAt        DateTime
+  receivedAt        DateTime        @default(now())
+  appVersion        String
+  researchCondition StudyCondition?
+  idempotencyKey    String          @unique
+  metadata          Json            @default("{}")
+  sourceTraceId     String?
+  privacyClass      PrivacyClass    @default(EDUCATIONAL_RECORD)
+  status            EventStatus     @default(ACCEPTED)
+  quarantineReason  String?
+
+  @@index([eventName, occurredAt])
+  @@index([courseId, eventName, occurredAt])
+  @@index([actorId, occurredAt])
+  @@index([assignmentId, eventName])
+  @@index([status])
+}
+
+/// Transactional outbox row written in the same DB transaction as the domain write.
+model OutboxEvent {
+  id          String       @id @default(cuid())
+  /// AnalyticsEvent.id
+  eventId     String       @unique
+  eventName   String
+  /// Serialized envelope delivered to consumers.
+  payload     Json
+  status      OutboxStatus @default(PENDING)
+  attempts    Int          @default(0)
+  maxAttempts Int          @default(8)
+  lastError   String?
+  availableAt DateTime     @default(now())
+  lockedAt    DateTime?
+  lockedBy    String?
+  processedAt DateTime?
+  createdAt   DateTime     @default(now())
+
+  @@index([status, availableAt])
+}
+
+/// Idempotency ledger: one row per (consumer, event).
+model ProcessedEvent {
+  id          String   @id @default(cuid())
+  consumer    String
+  eventId     String
+  processedAt DateTime @default(now())
+
+  @@unique([consumer, eventId])
+}
+
+// Aggregates: one row per metric per scope per window per segment. `value = numerator/denominator`
+// where applicable; `suppressed` = denominator below ANALYTICS_SMALL_N_THRESHOLD (UI shows "Insufficient data").
+
+model CourseAggregate {
+  id            String    @id @default(cuid())
+  courseId      String
+  metricKey     String
+  metricVersion Int       @default(1)
+  /// "all" or e.g. "2026-W40" / ISO date for daily rows.
+  windowKey     String    @default("all")
+  windowStart   DateTime?
+  windowEnd     DateTime?
+  timezone      String    @default("America/New_York")
+  segment       String    @default("all")
+  numerator     Float?
+  denominator   Float?
+  value         Float?
+  sampleSize    Int       @default(0)
+  suppressed    Boolean   @default(false)
+  metric        Json      @default("{}")
+  computedAt    DateTime  @default(now())
+
+  @@unique([courseId, metricKey, windowKey, segment])
+}
+
+model AssignmentAggregate {
+  id            String    @id @default(cuid())
+  courseId      String
+  assignmentId  String
+  metricKey     String
+  metricVersion Int       @default(1)
+  windowKey     String    @default("all")
+  windowStart   DateTime?
+  windowEnd     DateTime?
+  timezone      String    @default("America/New_York")
+  segment       String    @default("all")
+  numerator     Float?
+  denominator   Float?
+  value         Float?
+  sampleSize    Int       @default(0)
+  suppressed    Boolean   @default(false)
+  metric        Json      @default("{}")
+  computedAt    DateTime  @default(now())
+
+  @@unique([assignmentId, metricKey, windowKey, segment])
+  @@index([courseId])
+}
+
+model QuestionAggregate {
+  id            String    @id @default(cuid())
+  courseId      String
+  assignmentId  String
+  questionId    String
+  metricKey     String
+  metricVersion Int       @default(1)
+  windowKey     String    @default("all")
+  windowStart   DateTime?
+  windowEnd     DateTime?
+  timezone      String    @default("America/New_York")
+  segment       String    @default("all")
+  numerator     Float?
+  denominator   Float?
+  value         Float?
+  sampleSize    Int       @default(0)
+  suppressed    Boolean   @default(false)
+  metric        Json      @default("{}")
+  computedAt    DateTime  @default(now())
+
+  @@unique([questionId, metricKey, windowKey, segment])
+  @@index([courseId])
+  @@index([assignmentId])
+}
+
+model TopicAggregate {
+  id            String    @id @default(cuid())
+  courseId      String
+  topicId       String
+  metricKey     String
+  metricVersion Int       @default(1)
+  windowKey     String    @default("all")
+  windowStart   DateTime?
+  windowEnd     DateTime?
+  timezone      String    @default("America/New_York")
+  segment       String    @default("all")
+  numerator     Float?
+  denominator   Float?
+  value         Float?
+  sampleSize    Int       @default(0)
+  suppressed    Boolean   @default(false)
+  metric        Json      @default("{}")
+  computedAt    DateTime  @default(now())
+
+  @@unique([topicId, metricKey, windowKey, segment])
+  @@index([courseId])
+}
+
+model MisconceptionAggregate {
+  id                  String    @id @default(cuid())
+  courseId            String
+  misconceptionId     String
+  topicId             String
+  /// Optional narrower scope ("" = course-wide).
+  assignmentId        String    @default("")
+  metricKey           String
+  metricVersion       Int       @default(1)
+  windowKey           String    @default("all")
+  windowStart         DateTime?
+  windowEnd           DateTime?
+  timezone            String    @default("America/New_York")
+  segment             String    @default("all")
+  /// Minimum detector confidence included + detector version(s), per metric rules.
+  confidenceThreshold Float     @default(0.6)
+  detectorVersions    String[]  @default([])
+  numerator           Float?
+  denominator         Float?
+  value               Float?
+  sampleSize          Int       @default(0)
+  suppressed          Boolean   @default(false)
+  metric              Json      @default("{}")
+  computedAt          DateTime  @default(now())
+
+  @@unique([misconceptionId, assignmentId, metricKey, windowKey, segment])
+  @@index([courseId])
+}
+
+// ---------------------------------------------------------------------------
+// Research plane
+// ---------------------------------------------------------------------------
+
+model StudyParticipant {
+  id               String         @id @default(cuid())
+  userId           String
+  courseId         String
+  /// HMAC-SHA256(userId, RESEARCH_PSEUDONYM_SECRET) — see src/server/events/pseudonym.ts.
+  pseudonymousId   String
+  condition        StudyCondition
+  consentStatus    ConsentStatus  @default(NOT_ASKED)
+  consentBasis     String?
+  /// Conditions never change silently; changes require StudyConditionChange + AuditLog.
+  conditionLocked  Boolean        @default(true)
+  assignedAt       DateTime       @default(now())
+  assignedById     String?
+  /// e.g. "seed-deterministic-v1", "admin-manual", "stratified-random-v1"
+  assignmentMethod String         @default("admin-manual")
+  withdrawnAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user    User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course  Course                 @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  changes StudyConditionChange[]
+
+  @@unique([userId, courseId])
+  @@index([pseudonymousId])
+  @@index([courseId, condition])
+}
+
+model StudyConditionChange {
+  id            String         @id @default(cuid())
+  participantId String
+  fromCondition StudyCondition
+  toCondition   StudyCondition
+  reason        String
+  changedById   String
+  changedAt     DateTime       @default(now())
+
+  participant StudyParticipant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([participantId])
+}
+
+/// SEPARATELY PROTECTED identity <-> research ID mapping. Only research-admin re-identification paths
+/// (audited) may read it; exports never join it.
+model ResearchParticipantMapping {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  participantId String   @unique
+  /// "hmac-sha256"
+  method        String   @default("hmac-sha256")
+  keyVersion    Int      @default(1)
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+/// Approved, pseudonymous research projection of AnalyticsEvent (no direct identifiers).
+model ResearchEvent {
+  id                String          @id @default(cuid())
+  sourceEventId     String          @unique
+  participantId     String?
+  eventName         String
+  eventTime         DateTime
+  condition         StudyCondition?
+  courseId          String?
+  assignmentId      String?
+  assignmentVersion Int?
+  questionId        String?
+  questionVersion   Int?
+  payloadVersion    Int             @default(1)
+  approvedPayload   Json            @default("{}")
+  createdAt         DateTime        @default(now())
+
+  @@index([participantId, eventTime])
+  @@index([courseId, eventName, eventTime])
+}
+
+/// Versioned dataset manifest (research exports and training/eval datasets). Appendix C template.
+model DatasetManifest {
+  id                              String         @id @default(cuid())
+  datasetKey                      String
+  version                         Int
+  name                            String
+  purpose                         DatasetPurpose
+  owner                           String
+  sourceSystems                   String[]       @default([])
+  sourceWindowStart               DateTime?
+  sourceWindowEnd                 DateTime?
+  eligibleCohort                  String?
+  policyBasis                     String?
+  /// Row grain: interaction | student | question | student-question
+  rowGrain                        String?
+  fieldsIncluded                  String[]       @default([])
+  fieldsExcluded                  String[]       @default([])
+  inclusionRules                  Json?
+  exclusionRules                  Json?
+  deidentificationTransformations Json?
+  deidentificationVersion         String?
+  labelingMethod                  String?
+  qualityReviewProcedure          String?
+  dedupMethod                     String?
+  splitRule                       String?
+  knownLimitations                String?
+  codeVersion                     String
+  queryVersion                    String?
+  modelVersions                   String[]       @default([])
+  promptVersions                  String[]       @default([])
+  recordCount                     Int            @default(0)
+  checksum                        String?
+  retentionRule                   String?
+  createdById                     String
+  createdAt                       DateTime       @default(now())
+  frozenAt                        DateTime?
+
+  exports         ResearchExport[]
+  datasetVersions DatasetVersion[]
+
+  @@unique([datasetKey, version])
+}
+
+model ResearchExport {
+  id            String       @id @default(cuid())
+  requestedById String
+  approvedById  String?
+  courseId      String?
+  /// { dateFrom, dateTo, assignmentIds, eventNames, conditions }
+  filters       Json
+  /// Field allowlist actually exported.
+  fields        String[]
+  format        ExportFormat
+  status        ExportStatus @default(REQUESTED)
+  purpose       String       @default("research")
+  manifestId    String?
+  rowCount      Int?
+  checksum      String?
+  filePath      String?
+  errorMessage  String?
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  requestedBy User             @relation("ExportRequester", fields: [requestedById], references: [id])
+  manifest    DatasetManifest? @relation(fields: [manifestId], references: [id], onDelete: SetNull)
+
+  @@index([requestedById, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Model-improvement plane (nothing enters automatically)
+// ---------------------------------------------------------------------------
+
+model TrainingCandidate {
+  id                           String             @id @default(cuid())
+  sourceType                   TrainingSourceType
+  /// Source table + id (lineage), e.g. sourceTable "AiMessage".
+  sourceTable                  String?
+  sourceId                     String?
+  courseId                     String?
+  /// De-identified content only (never raw identifiers).
+  content                      Json
+  contentHash                  String             @unique
+  trainingEligible             Boolean            @default(false)
+  trainingEligibilityReason    String?
+  consentBasis                 String?
+  deidentifiedAt               DateTime?
+  reviewStatus                 ReviewStatus       @default(PENDING)
+  reviewedById                 String?
+  reviewedAt                   DateTime?
+  datasetSplit                 DatasetSplit       @default(UNASSIGNED)
+  sourceModelVersion           String?
+  sourcePromptVersion          String?
+  // The nine required gates (TASK §25). All must be true before trainingEligible may be set.
+  gatePolicyAllowed            Boolean            @default(false)
+  gateDeidentified             Boolean            @default(false)
+  gatePiiSecretScanPassed      Boolean            @default(false)
+  gateHiddenTestLeakagePassed  Boolean            @default(false)
+  gateCopyrightAuthorized      Boolean            @default(false)
+  gateQualityReviewed          Boolean            @default(false)
+  gateDeduplicated             Boolean            @default(false)
+  gateContaminationCheckPassed Boolean            @default(false)
+  gateDatasetVersioned         Boolean            @default(false)
+  datasetVersionId             String?
+  createdAt                    DateTime           @default(now())
+  updatedAt                    DateTime           @updatedAt
+
+  datasetVersion DatasetVersion? @relation(fields: [datasetVersionId], references: [id], onDelete: SetNull)
+
+  @@index([trainingEligible, reviewStatus])
+}
+
+model DatasetVersion {
+  id          String         @id @default(cuid())
+  name        String
+  version     Int
+  purpose     DatasetPurpose
+  status      DatasetStatus  @default(DRAFT)
+  manifestId  String?
+  recordCount Int            @default(0)
+  checksum    String?
+  filePath    String?
+  createdById String
+  createdAt   DateTime       @default(now())
+  frozenAt    DateTime?
+
+  manifest   DatasetManifest?    @relation(fields: [manifestId], references: [id], onDelete: SetNull)
+  candidates TrainingCandidate[]
+
+  @@unique([name, version])
+}
+
+/// Permanent held-out evaluation set. DELETE blocked by trigger; training exports must exclude contentHash matches.
+model HeldOutEvalItem {
+  id               String   @id @default(cuid())
+  key              String   @unique
+  /// "leakage" | "jailbreak" | "syntax_error" | "runtime_error" | "conceptual" | ...
+  category         String
+  mode             AiMode
+  input            Json
+  expectedBehavior Json
+  contentHash      String   @unique
+  source           String   @default("synthetic")
+  createdAt        DateTime @default(now())
+}
+
+// ---------------------------------------------------------------------------
+// Ops plane
+// ---------------------------------------------------------------------------
+
+/// Flag override rows. Precedence: COURSE row > ENVIRONMENT row > FEATURE_* env default.
+model FeatureFlag {
+  id          String    @id @default(cuid())
+  key         String
+  scope       FlagScope
+  /// "env" for ENVIRONMENT scope, courseId for COURSE scope.
+  scopeKey    String
+  courseId    String?
+  enabled     Boolean
+  description String?
+  updatedById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  course Course? @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([key, scopeKey])
+}
+
+/// Append-only (UPDATE/DELETE blocked by trigger outside retention purges).
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  /// e.g. "assignment.publish", "grade.override", "transcript.read_raw", "research.export", "flag.update"
+  action     String
+  targetType String
+  targetId   String?
+  courseId   String?
+  reason     String?
+  metadata   Json     @default("{}")
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([action, createdAt])
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@index([courseId, createdAt])
+}
+
+model BackgroundJobFailure {
+  id           String    @id @default(cuid())
+  queue        String
+  jobName      String
+  jobId        String?
+  payload      Json?
+  error        String
+  stack        String?
+  attempts     Int       @default(0)
+  failedAt     DateTime  @default(now())
+  resolvedAt   DateTime?
+  resolvedById String?
+
+  @@index([queue, failedAt])
+  @@index([resolvedAt])
+}
+
+model RetentionPolicy {
+  id            String          @id @default(cuid())
+  category      RetentionClass  @unique
+  /// null = no automatic action (must be decided before pilot launch).
+  retentionDays Int?
+  action        RetentionAction @default(KEEP)
+  description   String
+  lastRunAt     DateTime?
+  updatedById   String?
+  updatedAt     DateTime        @updatedAt
+}
+
+model RosterImport {
+  id             String             @id @default(cuid())
+  courseId       String
+  sectionId      String?
+  uploadedById   String
+  fileName       String
+  status         RosterImportStatus @default(UPLOADED)
+  rowCount       Int                @default(0)
+  validCount     Int                @default(0)
+  errorCount     Int                @default(0)
+  duplicateCount Int                @default(0)
+  report         Json?
+  createdAt      DateTime           @default(now())
+  appliedAt      DateTime?
+
+  course     Course            @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  uploadedBy User              @relation(fields: [uploadedById], references: [id])
+  rows       RosterImportRow[]
+
+  @@index([courseId, createdAt])
+}
+
+model RosterImportRow {
+  id          String          @id @default(cuid())
+  importId    String
+  rowNumber   Int
+  email       String?
+  name        String?
+  role        CourseRole?
+  sectionCode String?
+  status      RosterRowStatus
+  action      RosterRowAction @default(NONE)
+  errors      String[]        @default([])
+  userId      String?
+
+  rosterImport RosterImport @relation(fields: [importId], references: [id], onDelete: Cascade)
+
+  @@unique([importId, rowNumber])
+}
