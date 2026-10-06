@@ -36,3 +36,8 @@ storage/
 .vercel
 .env*
 !.env.example
+
+# Agent skills installed by marketplace integrations (local tooling)
+.agents/
+.claude/skills/
+skills-lock.json
