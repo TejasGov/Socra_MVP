@@ -120,6 +120,7 @@ async function toDto(view: StudentAssignmentView): Promise<WorkspaceDto> {
         }
       : null,
     latestRun: toRun(q.latestRun),
+    answerReview: q.answerReview,
   }));
 
   return {

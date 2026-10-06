@@ -23,6 +23,7 @@ import {
 } from "./score";
 import { isPlatformFailure, runGradingTests } from "./runner";
 import { suggestWrittenGradeSafe } from "./ai-suggestion";
+import { gradeKeyedAnswer } from "@/lib/quiz";
 
 // ---------------------------------------------------------------------------------------------------------------
 // Types stored in Grade.gradingResults (SERVER-ONLY: includes hidden test names and outcomes)
@@ -39,7 +40,9 @@ export interface StoredTestResult {
 }
 
 export interface GradingResults {
+  /** "multiple_choice" = graded against the stored answer key (multiple choice and keyed short answer). */
   kind: "tests" | "manual" | "multiple_choice";
+  answerKeyMatched?: boolean;
   /** Set while the runner was unreachable; the grade is retryable. */
   pending?: "PENDING_RUNNER";
   reason?: string;
@@ -57,15 +60,6 @@ const asResults = (v: unknown): GradingResults | null =>
 // ---------------------------------------------------------------------------------------------------------------
 // Automatic grading
 // ---------------------------------------------------------------------------------------------------------------
-
-function mcCorrect(answerKey: unknown, content: string): boolean {
-  const key =
-    answerKey && typeof answerKey === "object" && !Array.isArray(answerKey)
-      ? (answerKey as { correct?: unknown }).correct
-      : answerKey;
-  if (key === undefined || key === null) return false;
-  return String(key).trim().toLowerCase() === content.trim().toLowerCase();
-}
 
 /**
  * Grade every answer in a submission. Coding: run ALL tests (public + hidden) with kind GRADING, weighted score.
@@ -140,6 +134,7 @@ export async function gradeSubmission(
       rubricVersion: rubric?.version ?? null,
     };
 
+    const keyed = qv.type === "CODING" ? null : gradeKeyedAnswer(qv.type, qv.answerKey, ans.content);
     if (qv.type === "CODING") {
       const language = ans.language;
       const tests = qv.testCases
@@ -268,9 +263,9 @@ export async function gradeSubmission(
           };
         }
       }
-    } else if (qv.type === "MULTIPLE_CHOICE" && qv.answerKey !== null) {
-      const ok = mcCorrect(qv.answerKey, ans.content);
-      const pts = ok ? qv.points : 0;
+    } else if (keyed) {
+      // Multiple choice and short answer / code trace with an answer key: deterministic and final.
+      const pts = keyed.correct ? qv.points : 0;
       data = {
         ...base,
         rawPoints: pts,
@@ -280,6 +275,7 @@ export async function gradeSubmission(
         finalScore: pts,
         gradingResults: {
           kind: "multiple_choice",
+          answerKeyMatched: keyed.correct,
           testPoints: pts,
           testPointsMax: qv.points,
           computedAt: new Date().toISOString(),

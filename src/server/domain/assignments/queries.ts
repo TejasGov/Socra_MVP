@@ -1,6 +1,7 @@
 import "server-only";
 import type { CourseRole, ProgrammingLanguage } from "@/generated/prisma/enums";
 import { prisma } from "@/server/db";
+import { parseAnswerKey, parseStoredChoices } from "@/lib/quiz";
 import type { CurrentUser } from "@/server/auth/current-user";
 import { activeMembership, can } from "@/server/auth/rbac";
 import { recordEvent } from "@/server/events";
@@ -254,6 +255,8 @@ export interface StudentQuestionView {
   latestRun: StudentRunSummary | null;
   /** Review mode only (CLOSED and released). */
   referenceSolution: string | null;
+  /** Review mode only: the quiz answer and its explanation from the answer key (never the raw key). */
+  answerReview: { correctAnswer: string | null; explanation: string | null } | null;
 }
 
 export interface StudentSubmissionView {
@@ -303,6 +306,24 @@ export interface StudentAssignmentView {
   submitBlockedReason: string | null;
   /** True for staff previews: nothing the viewer does is stored as student data. */
   preview: boolean;
+}
+
+/** Student-facing summary of a released answer key: the correct answer as text plus the explanation. */
+function answerReviewFor(
+  type: string,
+  choices: unknown,
+  answerKey: unknown,
+): { correctAnswer: string | null; explanation: string | null } | null {
+  if (answerKey === null || answerKey === undefined) return null;
+  const key = parseAnswerKey(answerKey);
+  let correctAnswer: string | null = null;
+  if (type === "MULTIPLE_CHOICE" && key.correct !== null) {
+    correctAnswer = parseStoredChoices(choices).find((c) => c.id === key.correct)?.text ?? null;
+  } else if (type === "SHORT_ANSWER" && key.accepted.length > 0) {
+    correctAnswer = key.accepted[0]!;
+  }
+  const explanation = key.explanation.trim() || null;
+  return correctAnswer || explanation ? { correctAnswer, explanation } : null;
 }
 
 function asStringArray(v: unknown): string[] {
@@ -386,6 +407,7 @@ export async function getAssignmentForStudent(
           entryPoint: true,
           choices: true,
           referenceSolution: review,
+          answerKey: review,
           testCases: {
             where: { visibility: "PUBLIC" },
             orderBy: { order: "asc" },
@@ -524,7 +546,7 @@ export async function getAssignmentForStudent(
           language: v.language,
           starterCode: v.starterCode,
           entryPoint: v.entryPoint,
-          choices: Array.isArray(v.choices) ? asStringArray(v.choices) : null,
+          choices: Array.isArray(v.choices) ? parseStoredChoices(v.choices).map((c) => c.text) : null,
           publicTests: v.testCases
             .filter((t) => t.visibility === "PUBLIC")
             .map((t) => {
@@ -563,6 +585,9 @@ export async function getAssignmentForStudent(
             : null,
           referenceSolution: review
             ? ((v as { referenceSolution?: string | null }).referenceSolution ?? null)
+            : null,
+          answerReview: review
+            ? answerReviewFor(v.type, v.choices, (v as { answerKey?: unknown }).answerKey)
             : null,
         };
       }),

@@ -9,6 +9,7 @@ import {
   assignmentDraftSuggestionSchema,
   writtenGradeSuggestionSchema,
   type AssignmentDraftModelOutput,
+  type DraftQuestionType,
   type AssignmentDraftSuggestion,
   type SuggestedTest,
   type WrittenGradeSuggestion,
@@ -21,6 +22,7 @@ import { runProtectedTurn } from "@/server/domain/socra/sessions";
 import { getWorkspaceContextForAi } from "@/server/domain/workspace/context";
 import { isEnabled } from "@/server/flags";
 import { HttpError } from "@/server/http";
+import { choiceId, splitAccepted } from "@/lib/quiz";
 
 /**
  * Faculty AI services (TASK §22–24). Every output is a suggestion for human review: nothing publishes, grades or
@@ -170,6 +172,14 @@ function toTest(
   };
 }
 
+const STORED_TYPE: Record<DraftQuestionType, AssignmentDraftSuggestion["questions"][number]["type"]> = {
+  CODE: "CODING",
+  MULTIPLE_CHOICE: "MULTIPLE_CHOICE",
+  SHORT_ANSWER: "SHORT_ANSWER",
+  TRACE: "SHORT_ANSWER",
+  WRITTEN: "ESSAY",
+};
+
 /** Model output (strict JSON-string test values) -> contract shape (C's TestCase convention, text hint ladder). */
 export function toApiSuggestion(m: AssignmentDraftModelOutput): AssignmentDraftSuggestion {
   return {
@@ -179,16 +189,31 @@ export function toApiSuggestion(m: AssignmentDraftModelOutput): AssignmentDraftS
     topicSlugs: m.topicSlugs,
     scaffold: m.scaffold,
     questions: m.questions.map((q, i) => {
-      const entryPoint = mainFunctionName(q.starterCode);
-      const points = q.rubric.reduce((sum, c) => sum + c.points, 0) || 10;
+      const type = STORED_TYPE[q.type];
+      const coding = type === "CODING";
+      const entryPoint = coding ? mainFunctionName(q.starterCode) : null;
+      const rubricPoints = q.rubric.reduce((sum, c) => sum + c.points, 0);
+      const points = q.points > 0 ? q.points : rubricPoints || 10;
+      // Choice ids are normalized to the seed convention (a, b, c, ...) so the key always points at a choice.
+      const choices =
+        type === "MULTIPLE_CHOICE" ? q.choices.map((c, ci) => ({ id: choiceId(ci), text: c.text })) : [];
+      const keyIndex = q.choices.findIndex((c) => c.id.trim().toLowerCase() === q.answer.trim().toLowerCase());
+      const fallbackTitle = m.questions.length > 1 ? `${m.title} (part ${i + 1})` : m.title;
       return {
-        title: m.questions.length > 1 ? `${m.title} (part ${i + 1})` : m.title,
+        title: q.title.trim() || fallbackTitle,
+        type,
+        kind: q.type,
         prompt: q.prompt,
+        choices,
+        correctChoice: type === "MULTIPLE_CHOICE" && keyIndex >= 0 ? choiceId(keyIndex) : "",
+        acceptedAnswers:
+          type === "SHORT_ANSWER" || type === "ESSAY" ? splitAccepted(q.answer) : [],
+        explanation: q.explanation,
         entryPoint,
         points,
-        starterCode: q.starterCode,
-        publicTests: q.publicTests.map((t) => toTest(t, entryPoint)),
-        hiddenTestSuggestions: q.hiddenTestSuggestions.map((t) => toTest(t, entryPoint)),
+        starterCode: coding ? q.starterCode : "",
+        publicTests: coding ? q.publicTests.map((t) => toTest(t, entryPoint)) : [],
+        hiddenTestSuggestions: coding ? q.hiddenTestSuggestions.map((t) => toTest(t, entryPoint)) : [],
         rubric: q.rubric.map((c) => ({ criterion: c.criterion, title: c.criterion, description: c.description, points: c.points, maxPoints: c.points })),
         hintLadder: [...q.hintLadder].sort((a, b) => a.level - b.level).map((h) => h.guidance),
         predictedMisconceptions: q.predictedMisconceptions,

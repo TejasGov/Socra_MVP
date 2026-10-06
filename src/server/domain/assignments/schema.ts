@@ -122,7 +122,16 @@ export const questionInputSchema = z.object({
   entryPoint: z.string().max(200).nullish(),
   /** SERVER-ONLY. */
   referenceSolution: z.string().max(100_000).nullish(),
-  choices: z.array(z.string().max(500)).max(12).nullish(),
+  /** MULTIPLE_CHOICE options: [{ id, text }] (seed convention; answerKey.correct is the id) or legacy plain strings. */
+  choices: z
+    .array(
+      z.union([
+        z.string().max(500),
+        z.object({ id: z.string().min(1).max(40), text: z.string().max(500) }),
+      ]),
+    )
+    .max(12)
+    .nullish(),
   answerKey: z.unknown().optional(),
   difficulty: z.number().int().min(1).max(5).default(2),
   topicKeys: z.array(z.string()).max(20).default([]),

@@ -23,8 +23,25 @@ export type ProtectedTurn = z.infer<typeof protectedTurnSchema>;
 
 export const SCAFFOLD_STAGES = ["PREDICT", "TRACE", "COUNTEREXAMPLE", "REPAIR", "EXPLAIN", "REFLECT"] as const;
 
+/** Question kinds the copilot may draft. TRACE is stored as SHORT_ANSWER, WRITTEN as ESSAY, CODE as CODING. */
+export const DRAFT_QUESTION_TYPES = ["CODE", "MULTIPLE_CHOICE", "SHORT_ANSWER", "TRACE", "WRITTEN"] as const;
+export type DraftQuestionType = (typeof DRAFT_QUESTION_TYPES)[number];
+
 export const draftQuestionSchema = z.object({
+  type: z.enum(DRAFT_QUESTION_TYPES),
+  /** Short label for the question; empty lets the service derive one. */
+  title: z.string(),
   prompt: z.string().min(1),
+  points: z.number().min(0).max(100),
+  /** MULTIPLE_CHOICE options as { id: "a".."f", text }; empty for every other type. */
+  choices: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).max(8),
+  /**
+   * Answer key. MULTIPLE_CHOICE: the correct choice id. SHORT_ANSWER / TRACE: accepted answers joined by "||".
+   * WRITTEN: key points joined by "||". CODE: empty.
+   */
+  answer: z.string(),
+  /** Why the answer is right (and the common wrong answers wrong). Shown to students only after release. */
+  explanation: z.string(),
   starterCode: z.string(),
   publicTests: z
     .array(
@@ -64,7 +81,7 @@ export const assignmentDraftSuggestionSchema = z.object({
   description: z.string().min(1),
   learningObjectives: z.array(z.string().min(1)).min(1).max(8),
   topicSlugs: z.array(z.string().min(1)).max(10),
-  questions: z.array(draftQuestionSchema).min(1).max(6),
+  questions: z.array(draftQuestionSchema).min(1).max(8),
   scaffold: z
     .array(z.object({ stage: z.enum(SCAFFOLD_STAGES), instructions: z.string().min(1) }))
     .max(6),
@@ -94,7 +111,18 @@ export interface AssignmentDraftSuggestion {
   topicSlugs: string[];
   questions: Array<{
     title: string;
+    /** Stored QuestionVersion.type. */
+    type: "CODING" | "MULTIPLE_CHOICE" | "SHORT_ANSWER" | "ESSAY";
+    /** What the copilot drafted (TRACE is stored as SHORT_ANSWER). */
+    kind: DraftQuestionType;
     prompt: string;
+    /** MULTIPLE_CHOICE options in the seed convention [{ id, text }]; [] otherwise. */
+    choices: Array<{ id: string; text: string }>;
+    /** MULTIPLE_CHOICE: correct choice id; otherwise "". */
+    correctChoice: string;
+    /** SHORT_ANSWER/TRACE: accepted answers; ESSAY: key points; otherwise []. */
+    acceptedAnswers: string[];
+    explanation: string;
     entryPoint: string | null;
     points: number;
     starterCode: string;

@@ -1,5 +1,6 @@
 import type { AssignmentDraftModelOutput, WrittenGradeSuggestion } from "../schemas";
 import type { AiRequestEnvelope } from "../types";
+import { mockQuizQuestions } from "./mock-quiz";
 import { codeLine, detectTopics, firstSentence, parseError, pick, type TopicKey } from "./mock-util";
 
 /** Deterministic mock behavior for PRACTICE, POST_ASSESSMENT_REVIEW, FACULTY_AUTHORING and FACULTY_ANALYTICS. */
@@ -358,6 +359,7 @@ export function mockAuthoring(env: AiRequestEnvelope): AssignmentDraftModelOutpu
   const language = (input.language ?? "PYTHON").toUpperCase();
   const written = input.format === "WRITTEN";
   const total = 10;
+  if (input.format === "QUIZ") return mockQuiz(prompt, topics);
   return {
     title: t.title,
     description: `${firstSentence(t.prompt, 300)} Generated from the request: "${prompt.slice(0, 160)}". Review and edit before publishing.`,
@@ -365,6 +367,12 @@ export function mockAuthoring(env: AiRequestEnvelope): AssignmentDraftModelOutpu
     topicSlugs: [...new Set([...t.topicSlugs, ...topics.filter((k) => k !== "functions")])].slice(0, 6),
     questions: [
       {
+        type: written ? "WRITTEN" : "CODE",
+        title: "",
+        points: total,
+        choices: [],
+        answer: "",
+        explanation: "",
         prompt: written ? `Explain, in your own words, how you would approach this problem and why: ${t.prompt}` : t.prompt,
         starterCode: written ? "" : starterCode(t, language),
         publicTests: written ? [] : t.tests.map(([name, args, expected]) => ({ name, argsJson: JSON.stringify(args), expectedJson: JSON.stringify(expected) })),
@@ -388,6 +396,24 @@ export function mockAuthoring(env: AiRequestEnvelope): AssignmentDraftModelOutpu
       { stage: "EXPLAIN", instructions: "Explain in two sentences why your solution is correct." },
       { stage: "REFLECT", instructions: "Which hint level did you need, and what would you do differently next time?" },
     ],
+  };
+}
+
+function mockQuiz(prompt: string, topics: TopicKey[]): AssignmentDraftModelOutput {
+  const { names, questions } = mockQuizQuestions(topics);
+  const slugs = topics.slice(0, 3).flatMap((k) => (k === "functions" ? [] : TEMPLATES[k].topicSlugs));
+  const label = names.join(", ");
+  return {
+    title: `Quiz: ${label.charAt(0).toUpperCase()}${label.slice(1)}`,
+    description: `A short quiz on ${label}. Multiple choice, code tracing and short answers are graded automatically; the written explanation is graded by course staff. Generated from the request: "${prompt.slice(0, 160)}". Review every question and answer key before publishing.`,
+    learningObjectives: [
+      `Predict the behavior of short programs involving ${names[0]}`,
+      "Trace code by hand and report its exact output",
+      "Explain a common mistake and how to fix it",
+    ],
+    topicSlugs: [...new Set(slugs)].slice(0, 6),
+    questions,
+    scaffold: [],
   };
 }
 
@@ -449,8 +475,101 @@ function humanize(path: string[]): string {
   return raw.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[_-]/g, " ").toLowerCase();
 }
 
+function usable(m: unknown): m is MetricLike & { value: number } {
+  return isMetric(m) && !m.suppressed && m.value !== null;
+}
+
+const percent = (m: MetricLike & { value: number }) => `${Math.round(m.value * 100)}%`;
+
+/**
+ * Course-overview payload -> a short note a TA would write. Every number is read from the input metrics
+ * (counts, denominators, rounded percents, the mean of a depth metric) so the number-validation guard passes.
+ */
+function structuredAnalyticsBrief(p: Record<string, unknown>): string {
+  const sentences: string[] = [];
+  const active = p.activeStudents;
+  if (usable(active)) {
+    sentences.push(
+      `${active.numerator} of ${active.denominator} enrolled students have been active recently.`,
+    );
+  }
+  const completion = p.completion;
+  if (usable(completion)) {
+    sentences.push(
+      `${completion.numerator} of ${completion.denominator} student-assignments have been submitted (${percent(completion)}).`,
+    );
+  }
+  const first = p.firstAttemptCorrectness;
+  const final = p.finalCorrectness;
+  if (usable(first) && usable(final)) {
+    sentences.push(
+      `On ${first.denominator} student-questions, ${first.numerator} were correct on the first attempt (${percent(first)}) and ${final.numerator} on the final attempt (${percent(final)}).`,
+    );
+  } else if (usable(first)) {
+    sentences.push(
+      `${first.numerator} of ${first.denominator} student-questions were correct on the first attempt (${percent(first)}).`,
+    );
+  }
+  const depth = p.interventionDepth;
+  if (usable(depth)) {
+    sentences.push(
+      `Socra-assisted work averaged guidance level ${depth.value.toFixed(1)} across ${depth.denominator} Socra-assisted tasks.`,
+    );
+  }
+  const recovery = p.guidedRecovery;
+  if (usable(recovery)) {
+    sentences.push(
+      `${recovery.numerator} of ${recovery.denominator} student-questions revised after using Socra ended correct.`,
+    );
+  }
+
+  const bullets: string[] = [];
+  const pain = (Array.isArray(p.painPoints) ? p.painPoints : []).find(
+    (r): r is { name: string; difficulty: MetricLike & { value: number } } =>
+      !!r && typeof (r as { name?: unknown }).name === "string" && usable((r as { difficulty?: unknown }).difficulty),
+  );
+  if (pain) {
+    bullets.push(
+      `Topic showing the most difficulty: ${pain.name}, ${pain.difficulty.numerator} of ${pain.difficulty.denominator} students (${percent(pain.difficulty)}).`,
+    );
+  }
+  const miscon = (Array.isArray(p.misconceptions) ? p.misconceptions : [])
+    .filter(
+      (r): r is { label: string; topicName?: string; prevalence: MetricLike & { value: number } } =>
+        !!r && typeof (r as { label?: unknown }).label === "string" && usable((r as { prevalence?: unknown }).prevalence),
+    )
+    .sort((a, b) => b.prevalence.value - a.prevalence.value)[0];
+  if (miscon) {
+    bullets.push(
+      `Most frequently reviewed misconception: "${miscon.label}"${miscon.topicName ? ` (${miscon.topicName})` : ""}, observed for ${miscon.prevalence.numerator} of ${miscon.prevalence.denominator} students (${percent(miscon.prevalence)}).`,
+    );
+  }
+  const lowest = (Array.isArray(p.assignments) ? p.assignments : [])
+    .filter(
+      (r): r is { title: string; completion: MetricLike & { value: number } } =>
+        !!r && typeof (r as { title?: unknown }).title === "string" && usable((r as { completion?: unknown }).completion),
+    )
+    .sort((a, b) => a.completion.value - b.completion.value)[0];
+  if (lowest) {
+    bullets.push(
+      `Lowest completion so far: ${lowest.title}, ${lowest.completion.numerator} of ${lowest.completion.denominator} submitted (${percent(lowest.completion)}).`,
+    );
+  }
+
+  if (sentences.length === 0 && bullets.length === 0) {
+    return "No metrics with enough data were available this week.";
+  }
+  const parts = [sentences.slice(0, 5).join(" ")];
+  if (bullets.length) parts.push(["Worth a look:", ...bullets.slice(0, 3).map((b) => `- ${b}`)].join("\n"));
+  return parts.filter(Boolean).join("\n\n");
+}
+
 export function mockAnalyticsBrief(env: AiRequestEnvelope): string {
   const payload = env.analyticsPayload ?? {};
+  const p = payload as Record<string, unknown>;
+  if (isMetric(p.completion) && (isMetric(p.activeStudents) || Array.isArray(p.painPoints))) {
+    return structuredAnalyticsBrief(p);
+  }
   const facts: string[] = [];
   const insufficient: string[] = [];
   let weakest: { label: string; value: number } | null = null;

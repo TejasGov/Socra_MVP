@@ -24,12 +24,14 @@ import {
   fromServer,
   newKey,
   toPayload,
+  nextChoiceId,
   type FormState,
   type Language,
   type QuestionUi,
   type TestUi,
 } from "./form-model";
 import type { AssignmentInputSerialized } from "@/server/domain/assignments/service";
+import { choiceId } from "@/lib/quiz";
 
 const CodeEditor = dynamic(
   () => import("@/components/workspace/code-editor").then((m) => m.CodeEditor),
@@ -539,23 +541,31 @@ function QuestionEditor({
       }
     >
       <div className="space-y-4">
-        <div className="grid gap-4 sm:grid-cols-4">
-          <Field id={`${id}-title`} label="Title" required className="sm:col-span-2">
+        <div className="grid gap-4 sm:grid-cols-6">
+          <Field id={`${id}-title`} label="Title" required className="sm:col-span-3">
             <Input
               value={q.title}
               disabled={disabled}
               onChange={(e) => onChange({ title: e.target.value })}
             />
           </Field>
-          <Field id={`${id}-type`} label="Question type">
+          <Field id={`${id}-type`} label="Question type" className="sm:col-span-2">
             <Select
               value={q.type}
               disabled={disabled}
-              onChange={(e) => onChange({ type: e.target.value as QuestionUi["type"] })}
+              onChange={(e) => {
+                const type = e.target.value as QuestionUi["type"];
+                // A new multiple-choice question starts with four empty options to fill in.
+                const choices =
+                  type === "MULTIPLE_CHOICE" && q.choices.length === 0
+                    ? [0, 1, 2, 3].map((i) => ({ key: newKey(), id: choiceId(i), text: "" }))
+                    : q.choices;
+                onChange({ type, choices });
+              }}
             >
               <option value="CODING">Coding</option>
-              <option value="SHORT_ANSWER">Short answer</option>
-              <option value="ESSAY">Essay</option>
+              <option value="SHORT_ANSWER">Short answer or trace</option>
+              <option value="ESSAY">Written explanation</option>
               <option value="MULTIPLE_CHOICE">Multiple choice</option>
             </Select>
           </Field>
@@ -647,29 +657,45 @@ function QuestionEditor({
         ) : null}
 
         {q.type === "MULTIPLE_CHOICE" ? (
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Field id={`${id}-choices`} label="Choices" help="One per line.">
-              <Textarea
-                value={q.choicesText}
-                disabled={disabled}
-                onChange={(e) => onChange({ choicesText: e.target.value })}
-              />
-            </Field>
-            <Field
-              id={`${id}-correct`}
-              label="Correct choice"
-              help="Type it exactly as written. Server only."
-            >
-              <Input
-                value={q.correctChoice}
-                disabled={disabled}
-                onChange={(e) => onChange({ correctChoice: e.target.value })}
-              />
-            </Field>
-          </div>
+          <ChoicesEditor q={q} index={index} disabled={disabled} onChange={onChange} />
         ) : null}
 
-        <div className="space-y-2">
+        {q.type === "SHORT_ANSWER" || q.type === "ESSAY" ? (
+          <Field
+            id={`${id}-accepted`}
+            label={q.type === "SHORT_ANSWER" ? "Accepted answers" : "Key points"}
+            help={
+              q.type === "SHORT_ANSWER"
+                ? "One per line. Answers are compared ignoring case, extra spaces and quotes, and graded automatically. Leave empty to grade by hand. Server only."
+                : "One per line. A checklist for whoever grades this answer. Server only."
+            }
+          >
+            <Textarea
+              value={q.acceptedText}
+              disabled={disabled}
+              className="min-h-20 font-mono"
+              onChange={(e) => onChange({ acceptedText: e.target.value })}
+              data-testid="accepted-answers"
+            />
+          </Field>
+        ) : null}
+
+        {q.type !== "CODING" ? (
+          <Field
+            id={`${id}-explanation`}
+            label="Explanation"
+            help="Markdown. Students see it with the correct answer only after the assignment closes and you release solutions."
+          >
+            <Textarea
+              value={q.explanation}
+              disabled={disabled}
+              className="min-h-20"
+              onChange={(e) => onChange({ explanation: e.target.value })}
+            />
+          </Field>
+        ) : null}
+
+        <div className="space-y-2" hidden={q.type === "MULTIPLE_CHOICE" && q.rubric.length === 0}>
           <div className="flex items-end justify-between">
             <div>
               <h4 className="text-fg text-sm font-medium">Rubric criteria</h4>
@@ -776,6 +802,96 @@ function QuestionEditor({
         </fieldset>
       </div>
     </Panel>
+  );
+}
+
+function ChoicesEditor({
+  q,
+  index,
+  disabled,
+  onChange,
+}: {
+  q: QuestionUi;
+  index: number;
+  disabled: boolean;
+  onChange: (p: Partial<QuestionUi>) => void;
+}) {
+  const id = `q${index}`;
+  const setText = (ci: number, text: string) =>
+    onChange({ choices: q.choices.map((c, k) => (k === ci ? { ...c, text } : c)) });
+  const remove = (ci: number) => {
+    const removed = q.choices[ci];
+    onChange({
+      choices: q.choices.filter((_, k) => k !== ci),
+      correctChoice: removed?.id === q.correctChoice ? "" : q.correctChoice,
+    });
+  };
+  return (
+    <fieldset className="space-y-2" data-testid="choices-editor">
+      <legend className="text-fg text-sm font-medium">Choices</legend>
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <p className="text-fg-subtle text-xs">
+            Select the correct choice. It is graded automatically and never sent to students before
+            solutions are released.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          icon={<Plus size={14} />}
+          disabled={disabled || q.choices.length >= 8}
+          onClick={() =>
+            onChange({
+              choices: [...q.choices, { key: newKey(), id: nextChoiceId(q.choices), text: "" }],
+            })
+          }
+        >
+          Add choice
+        </Button>
+      </div>
+      {q.choices.length === 0 ? (
+        <p className="text-fg-muted text-sm">No choices yet. Add at least two.</p>
+      ) : null}
+      <ul className="space-y-2">
+        {q.choices.map((c, ci) => (
+          <li key={c.key} className="flex items-center gap-2">
+            <input
+              type="radio"
+              id={`${id}-correct-${ci}`}
+              name={`${id}-correct`}
+              className="accent-accent size-4 shrink-0"
+              checked={q.correctChoice === c.id}
+              disabled={disabled}
+              onChange={() => onChange({ correctChoice: c.id })}
+              aria-label={`Choice ${c.id.toUpperCase()} is correct`}
+            />
+            <span className="text-fg-subtle w-4 font-mono text-xs" aria-hidden="true">
+              {c.id}
+            </span>
+            <Input
+              value={c.text}
+              disabled={disabled}
+              aria-label={`Choice ${c.id.toUpperCase()} text`}
+              placeholder="Choice text"
+              onChange={(e) => setText(ci, e.target.value)}
+              data-testid="choice-text"
+            />
+            {q.correctChoice === c.id ? <Badge tone="success">Correct</Badge> : null}
+            <Button
+              size="sm"
+              variant="ghost"
+              aria-label={`Remove choice ${c.id.toUpperCase()}`}
+              disabled={disabled}
+              onClick={() => remove(ci)}
+              icon={<Trash2 size={14} />}
+            />
+          </li>
+        ))}
+      </ul>
+      {q.choices.length > 0 && !q.choices.some((c) => c.id === q.correctChoice) ? (
+        <p className="text-fg-muted text-xs">No correct choice selected yet.</p>
+      ) : null}
+    </fieldset>
   );
 }
 

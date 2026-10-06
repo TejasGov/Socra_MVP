@@ -72,6 +72,8 @@ export interface WorkspaceQuestionDto {
   publicTests: PublicTestDto[];
   draft: DraftDto | null;
   latestRun: StudentRunDto | null;
+  /** Review mode only (closed and solutions released): correct answer and explanation for quiz questions. */
+  answerReview?: { correctAnswer: string | null; explanation: string | null } | null;
 }
 
 export interface SubmissionSummaryDto {
