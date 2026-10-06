@@ -93,7 +93,7 @@ export function buildProviderRequest(
     structuredOutput: opts.structured
       ? toStructuredOutputSpec(def.outputHandling.schemaName ?? opts.task, opts.structured)
       : undefined,
-    reasoningEffort: tier === "protected" ? "low" : "minimal",
+    reasoningEffort: tier === "protected" ? e.OPENAI_REASONING_EFFORT_PROTECTED : e.OPENAI_REASONING_EFFORT_ECONOMY,
     timeoutMs,
     signal: opts.signal,
   };

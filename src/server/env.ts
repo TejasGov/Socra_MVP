@@ -112,6 +112,9 @@ const rawSchema = z.object({
   OPENAI_ECONOMY_MODEL: str("gpt-6-luna"),
   OPENAI_EMBEDDING_MODEL: str("text-embedding-3-small"),
   OPENAI_TIMEOUT_MS: int(30000, 1000),
+  /** Reasoning effort per tier. Supported values differ by model (gpt-6-luna rejects "minimal"); "low" works on both. */
+  OPENAI_REASONING_EFFORT_PROTECTED: z.enum(["none", "minimal", "low", "medium", "high"]).optional().default("low"),
+  OPENAI_REASONING_EFFORT_ECONOMY: z.enum(["none", "minimal", "low", "medium", "high"]).optional().default("low"),
   /** Timeout for long structured generations (assignment/quiz authoring, practice item generation, grading suggestions). */
   OPENAI_LONG_TIMEOUT_MS: int(150000, 1000),
   OPENAI_MAX_RETRIES: int(2, 0),
