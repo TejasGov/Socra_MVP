@@ -114,6 +114,8 @@ export interface SocraPanelProps {
   questionType?: string;
   /** Optional label shown above the log, e.g. the question title. */
   scopeLabel?: string;
+  /** Show the policy sentence in the header. Off where a page-level ModeBanner already states it. */
+  showPolicy?: boolean;
   className?: string;
 }
 
@@ -126,6 +128,7 @@ export function SocraPanel({
   available = true,
   scopeLabel,
   questionType,
+  showPolicy = true,
   className = "",
 }: SocraPanelProps) {
   const isCodeQuestion = !questionType || questionType === "CODING";
@@ -343,7 +346,9 @@ export function SocraPanel({
         <h2 id={headingId} className="text-fg text-sm font-semibold">
           Socra <span className="text-fg-muted font-normal">· {copy.name}</span>
         </h2>
-        <p className="text-fg-muted mt-1 text-xs">{policySummary ?? copy.statement}</p>
+        {showPolicy ? (
+          <p className="text-fg-muted mt-1 text-xs">{policySummary ?? copy.statement}</p>
+        ) : null}
         {mode === "PROTECTED_ASSESSMENT" && levelCap !== null ? (
           <div className="mt-2">
             <GuidanceDepth deepest={maxLevel} cap={levelCap} />

@@ -161,6 +161,11 @@ const rawSchema = z.object({
   // Worker / outbox
   WORKER_HEALTH_PORT: int(3001, 1),
   OUTBOX_POLL_INTERVAL_MS: int(1000, 100),
+  /**
+   * Serverless hosting (e.g. Vercel) has no long-running worker. When true, mutating API requests drain the
+   * transactional outbox after the response is sent, and refresh aggregates / missing embeddings on a throttle.
+   */
+  INLINE_JOBS: bool(false),
   OUTBOX_BATCH_SIZE: int(50, 1),
   OUTBOX_MAX_ATTEMPTS: int(8, 1),
 

@@ -13,3 +13,6 @@ export const POST = route<Ctx>(async (req, ctx) => {
   const user = await requireUser();
   return json(await requestAiSuggestion(user, id, questionId));
 });
+
+// Vercel function limit: long model generations need more than the default.
+export const maxDuration = 120;

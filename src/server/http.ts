@@ -1,5 +1,5 @@
 import "server-only";
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 import { ZodError, type ZodType } from "zod";
 import { AuthError } from "./auth/rbac";
 import { env } from "./env";
@@ -67,6 +67,13 @@ type Handler<C> = (req: Request, ctx: C) => Promise<Response>;
 /** Wrap a route handler with uniform error mapping (AuthError -> 401/403, ZodError -> 400, HttpError -> status). */
 export function route<C = unknown>(handler: Handler<C>): Handler<C> {
   return async (req, ctx) => {
+    if (env().INLINE_JOBS && req.method !== "GET" && req.method !== "HEAD") {
+      // Serverless hosting has no worker process: process the outbox after this response is sent.
+      after(async () => {
+        const { runInlineJobs } = await import("./jobs/inline");
+        await runInlineJobs();
+      });
+    }
     try {
       return await handler(req, ctx);
     } catch (err) {

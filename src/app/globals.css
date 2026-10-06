@@ -79,6 +79,17 @@
   --shadow-pop: 0 4px 16px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.06);
 }
 
+/* Editor syntax tokens. All pairs are at least 5:1 on surface and surface-2. */
+:root {
+  --syntax-keyword: #2f6f68;
+  --syntax-string: #8a4b0f;
+  --syntax-number: #2b5784;
+  --syntax-comment: #626a68;
+  --syntax-function: #1b1f1e;
+  --syntax-type: #2c6a3f;
+  --syntax-operator: #535b59;
+}
+
 /* Dark tokens (optional in V1). Opt in with <html data-theme="dark">. */
 :root[data-theme="dark"] {
   color-scheme: dark;
@@ -107,6 +118,13 @@
   --color-warning-bg: #322a14;
   --color-success: #8fcb9f;
   --color-success-bg: #1b2c20;
+  --syntax-keyword: #6db3a9;
+  --syntax-string: #e8b27a;
+  --syntax-number: #9cc0e6;
+  --syntax-comment: #8d9593;
+  --syntax-function: #e8ebea;
+  --syntax-type: #8fcb9f;
+  --syntax-operator: #a9b1af;
 }
 
 @layer base {

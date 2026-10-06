@@ -340,6 +340,7 @@ export function AssignmentWorkspace({ data }: { data: WorkspaceDto }) {
                 })}
                 contextItems={contextFor(q.type)}
                 questionType={q.type}
+                showPolicy={false}
                 scopeLabel={
                   questions.length > 1 ? `About question ${questions.indexOf(q) + 1}` : undefined
                 }

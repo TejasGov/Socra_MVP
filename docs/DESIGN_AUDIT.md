@@ -444,15 +444,18 @@ Re-run `node .playwright-mcp/audit/ws.cjs` and `ws2.cjs` (with `MSYS_NO_PATHCONV
 | 39 | Fixed | `scrubHarnessText` / `scrubHarnessOutput` in `server/runner/types.ts` strip `/opt/socra/` frames and `spec_in` lines from stderr and test actual/message; applied in `toStudentRunResult` and before the run is recorded, so Socra sees the clean text. The console shows a one-line error summary with "Show error", collapses identical errors into one line above the table, drops the Input column when it duplicates the test name, and uses `[overflow-wrap:anywhere]` instead of `break-all`. |
 | 41 | Fixed | Help text is "Enter sends. Shift+Enter adds a line."; redundant chord removed. |
 | 42 | Fixed | Two-item lists join with " and ". |
-| 43 | Partly fixed | "Practice mode:" prefix removed from the practice summary. The assignment-page duplicate policy sentence is not trimmed. |
+| 43 | Fixed | "Practice mode:" prefix removed from the practice summary. `SocraPanel` takes `showPolicy`; the assignment workspace passes `false`, so the panel header only names the mode and the `ModeBanner` states the policy once. Practice (no banner) keeps the sentence. |
 | 44 | Fixed | See #36. |
 | 45 | Fixed | Closed assignments hide the submit button and the "Attempts left" item. |
 | 46 | Fixed | "No attempts left. You can keep editing and running code, but changes will not be submitted." in the banner when attempts are 0 and the assignment is open. |
 | 52 | Fixed | `text-[13px]` replaced by `text-code` in markdown, run-console, question-pane and practice-session. |
 | 53 | Fixed | "Jump to Socra" link below `xl` targeting `#socra-panel`. |
 | 54 | Fixed | `Dialog` takes an `initialFocus` ref (Button accepts `ref`); the submit dialog focuses "Keep working". |
-| 40, 47, 48, 49 | Deferred | Not attempted (time). |
-| 50 | Deferred | Moving run buttons into the editor toolbar (larger refactor). |
-| 51 | Deferred | Tokenized syntax theme in the editor (larger refactor). |
+| 40 | Fixed | Line wrapping kept at all widths. The gutter drift came from CodeMirror skipping measurement while the editor is off screen, leaving stale gutter line heights. `CodeEditor` now re-measures when it enters the viewport (IntersectionObserver), after `document.fonts.ready` and on the next frame; `.cm-line` and gutter line-height are pinned to 20px. Verified at 390px: gutter tops equal line tops, including wrapped lines. |
+| 47 | Fixed | Heading is "Question n" plus the topic name; the type moves to the meta line ("Short answer · difficulty 2 of 5"). |
+| 48 | Fixed | Explanation box uses `border-border bg-surface-2` with a `text-fg-muted` label, no accent rule. |
+| 49 | Fixed | Separate Status text column ("In progress" / "Finished") and an unlabelled action column ("Continue" / "View summary") with an sr-only object. |
+| 50 | Fixed | "Run code" and "Run public tests" are in the editor toolbar (grouped, labelled "Run"); test ids and Ctrl+Enter unchanged. The shortcut hint is helper text under the editor (still the editor's `aria-describedby`). Run buttons now precede the editor in tab order. |
+| 51 | Fixed | Syntax colours are `--syntax-*` tokens in `globals.css` (light on `:root`, dark under `:root[data-theme="dark"]`), all at least 5:1 against surface and surface-2; the CodeMirror highlight style uses `var(--syntax-*)`. |
 
 E2E isolation: the Playwright suite now uses only `student30@socra.local` (`USERS.student`), enrols it in CSE 115 and CSE 116 on first use (it was only in CSE 116), and the global teardown deletes its Submissions (cascading answers and grades) and Drafts, and resets AssignmentProgress, for student28-30 in the seeded courses. Append-only tables are never touched. student1-3 are no longer used by any spec. The profile assertion now checks the page heading, because a fresh account has no topic rows.

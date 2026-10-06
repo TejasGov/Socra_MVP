@@ -23,3 +23,6 @@ export const POST = route(async (req) => {
     weekStart: brief.weekStart,
   });
 });
+
+// Vercel function limit: long model generations need more than the default.
+export const maxDuration = 60;

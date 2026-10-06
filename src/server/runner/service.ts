@@ -2,7 +2,7 @@ import "server-only";
 import { getQueue, getQueueEvents, QUEUE_NAMES } from "../queues";
 import { env } from "../env";
 import { pingRedis } from "../redis";
-import { defaultRunLimits } from "./index";
+import { defaultRunLimits, getCodeRunner } from "./index";
 import {
   runnerUnavailable,
   type RunFile,
@@ -74,6 +74,13 @@ async function workerReachable(): Promise<{ ok: true } | { ok: false; detail: st
 
 export async function executeRun(input: ExecuteRunInput): Promise<RunResult> {
   const driver = env().CODE_RUNNER_DRIVER;
+  if (driver === "remote") {
+    // Managed sandbox: call it directly (no local worker/queue). Without a URL, fail fast and honestly.
+    if (!env().REMOTE_RUNNER_URL) {
+      return runnerUnavailable(input.runId, driver, "Code execution is not configured on this deployment.");
+    }
+    return getCodeRunner().run(buildRunJob(input));
+  }
   const probe = await workerReachable();
   if (!probe.ok) return runnerUnavailable(input.runId, driver, probe.detail);
 

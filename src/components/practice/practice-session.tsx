@@ -259,7 +259,7 @@ export function PracticeSession({
         <div className="text-fg-muted flex flex-wrap items-center justify-between gap-2 text-xs tabular-nums">
           <p>
             {item
-              ? `Question ${item.position} · ${item.topicName} · difficulty ${item.difficulty} of 5`
+              ? `${TYPE_LABEL[item.type]} · difficulty ${item.difficulty} of 5`
               : "Practice"}
             {` · ${answeredCount} answered this visit`}
           </p>
@@ -306,7 +306,8 @@ export function PracticeSession({
                 tabIndex={-1}
                 className="text-fg text-base font-semibold focus:outline-none"
               >
-                {TYPE_LABEL[item.type]}
+                Question {item.position}
+                <span className="text-fg-muted font-normal"> · {item.topicName}</span>
               </h2>
               {item.scaffoldNote ? (
                 <p className="text-fg-muted mt-1 text-sm">{item.scaffoldNote}</p>
@@ -475,9 +476,9 @@ export function PracticeSession({
             {explanation ? (
               <section
                 aria-label="Explanation"
-                className="border-accent bg-accent-subtle max-w-[68ch] border-l-2 px-3 py-2"
+                className="border-border bg-surface-2 max-w-[68ch] rounded-md border px-3 py-2"
               >
-                <p className="text-accent mb-1 text-xs font-medium">Explanation</p>
+                <p className="text-fg-muted mb-1 text-xs font-medium">Explanation</p>
                 <Markdown>{explanation}</Markdown>
               </section>
             ) : null}
