@@ -131,7 +131,6 @@ print(count_down(3))
     { key: "recursion", weight: 0.6 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 7 },
     {
       title: "Base case handles every integer",
       description: "Terminates for zero and negative inputs.",
@@ -259,7 +258,6 @@ print(sum_digits(123))
     { key: "call-stack-tracing", weight: 0.4 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 7 },
     {
       title: "Recursive case combines last digit and remainder",
       description: "Uses n % 10 and n // 10 correctly.",
@@ -377,7 +375,6 @@ print(running_totals([1, 2, 3]))
     { key: "control-flow", weight: 0.6 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Does not modify input", description: "Returns a new list.", maxPoints: 1 },
     { title: "Style", description: "Clear names and a single pass.", maxPoints: 1 },
   ],
@@ -488,7 +485,6 @@ print(remove_negatives([1, -2, 3]))
     { key: "control-flow", weight: 0.5 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 7 },
     { title: "Does not modify input", description: "Original list is unchanged.", maxPoints: 2 },
     { title: "Style", description: "Readable loop and conditions.", maxPoints: 1 },
   ],
@@ -723,7 +719,6 @@ console.log(sumEvens([1, 2, 3, 4]));
     { key: "control-flow", weight: 0.7 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Clear loop and condition", description: "Readable JavaScript.", maxPoints: 2 },
   ],
   hints: [
@@ -835,7 +830,6 @@ console.log(longestWord(["a", "abc", "ab"]));
     { key: "control-flow", weight: 0.8 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Clear loop and condition", description: "Readable JavaScript.", maxPoints: 2 },
   ],
   hints: [
