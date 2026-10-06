@@ -112,6 +112,8 @@ const rawSchema = z.object({
   OPENAI_ECONOMY_MODEL: str("gpt-6-luna"),
   OPENAI_EMBEDDING_MODEL: str("text-embedding-3-small"),
   OPENAI_TIMEOUT_MS: int(30000, 1000),
+  /** Timeout for long structured generations (assignment/quiz authoring, practice item generation, grading suggestions). */
+  OPENAI_LONG_TIMEOUT_MS: int(150000, 1000),
   OPENAI_MAX_RETRIES: int(2, 0),
   OPENAI_MAX_OUTPUT_TOKENS: int(900, 64),
   AI_KILL_SWITCH: bool(false),

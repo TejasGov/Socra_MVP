@@ -138,3 +138,10 @@ Append dated sections. Keep entries short and factual.
 - **Agent F shell conventions**: faculty pages read `searchParams.courseId` (set by the sidebar course switcher) and default to the first course taught. Practice links use `/practice?courseId=&topicId=`. Pages needing full width (workspace with a right Socra panel) render an element with `data-shell-width="full"` to lift the 1200px content cap. `/how-socra-works` requires sign-in (lives in the student shell). Shell and home/history read AiSession titles/dates and the privacy page reads RetentionPolicy directly (trivial reads, marked in code).
 
 - 2026-10-06 (security review): code-run job payloads are now deleted by the waiter as soon as the result arrives, with a 60 s removeOnComplete/removeOnFail fallback (supersedes the ~5 minute note above). Forwarded headers are trusted only with TRUST_PROXY=true. OIDC links by email only when email_verified is true.
+
+## 2026-10-06: Real OpenAI configuration (owner decision)
+- The owner chose `gpt-6-luna` for every tier (`OPENAI_PROTECTED_MODEL=gpt-6-luna` in `.env.local`). `.env.example` keeps the spec default (`gpt-6.1-sol` for the protected tier); switching is a one-line env change, no code change.
+- Cost is priced by the model that actually ran (`pricingTierFor` in `src/server/ai/gateway.ts`), so a protected-tier request served by Luna is billed at economy rates.
+- Measured on this machine: protected tutor turn ~11s on Sol vs ~2–4s on Luna; full quiz generation ~51s / $0.034 on Sol vs ~26s / $0.0017 on Luna. Luna's self-reported intervention level can understate how direct a hint is; run the protected-mode leakage evaluation before student use.
+- Long generations (authoring, practice generation, grading suggestions) use `OPENAI_LONG_TIMEOUT_MS` (default 150s); tutoring turns keep `OPENAI_TIMEOUT_MS` (30s).
+- After adding a key, run `npm run ai:embed` once to embed existing course materials and practice items (otherwise retrieval stays full-text only).

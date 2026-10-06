@@ -131,7 +131,15 @@ The key is read only on the server and is never sent to the browser. Requests ar
 defaults for the model variables are placeholders; check them against your account. `AI_MOCK_MODE=true` forces mock mode
 even when a key is present. Other AI controls (`OPENAI_BASE_URL`, `OPENAI_ORG_ID`, timeouts, token caps, turn limits,
 `AI_COURSE_BUDGET_USD`, `AI_KILL_SWITCH`) are documented in `.env.example`. With a key, the `embeddings` job indexes
-uploaded materials and retrieval becomes hybrid (vector plus full-text).
+uploaded materials and retrieval becomes hybrid (vector plus full-text). Materials that existed before the key was added
+(including the seeded lectures) are embedded once with:
+
+```bash
+npm run ai:embed
+```
+
+To run every AI feature on the cheaper model, point both tiers at it (e.g. `OPENAI_PROTECTED_MODEL=gpt-6-luna`); cost is
+always computed from the model that actually served the request.
 
 ## University SSO (OpenID Connect)
 
