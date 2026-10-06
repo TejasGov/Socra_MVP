@@ -104,7 +104,11 @@ export default async function Page() {
             <TD className="text-fg-muted">
               Driver: {h.runner.driver}.{" "}
               {h.runner.executing
-                ? "Runs execute in the worker."
+                ? h.runner.driver === "docker"
+                  ? "Runs execute in the worker."
+                  : h.runner.driver === "vercel-sandbox"
+                    ? "Each run executes in its own Vercel Sandbox microVM (Python and JavaScript; no Scala)."
+                    : "Runs execute in the remote sandbox service."
                 : "Runs report RUNNER_UNAVAILABLE; students keep their work and no output is invented."}
             </TD>
           </TR>

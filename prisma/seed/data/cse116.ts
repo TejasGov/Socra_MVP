@@ -154,7 +154,6 @@ The program reads one line of integers from standard input, builds the list with
     { key: "functions", weight: 0.3 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Handles empty list", description: "Returns 0 for None.", maxPoints: 1 },
     { title: "Style", description: "Single loop, no auxiliary Python list.", maxPoints: 1 },
   ],
@@ -296,7 +295,6 @@ The program reads the list values on line 1 and the target on line 2. Example: i
     { key: "traversal", weight: 0.3 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Stops at first match", description: "Returns immediately when found.", maxPoints: 1 },
     { title: "Style", description: "Clear variable names.", maxPoints: 1 },
   ],
@@ -450,7 +448,6 @@ Your solution must be recursive and must not use mutable collections.`,
     { key: "recursion", weight: 0.4 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Recursive structure", description: "Handles Leaf and Node cases.", maxPoints: 1 },
     { title: "Style", description: "Idiomatic Scala, no mutation.", maxPoints: 1 },
   ],
@@ -553,7 +550,6 @@ A binary tree is \`None\` (empty) or a list \`[value, left, right]\` where \`lef
     { key: "recursion-base-cases", weight: 0.5 },
   ],
   rubric: [
-    { title: "Correct results", description: "Public and hidden tests pass.", maxPoints: 8 },
     { title: "Base case for empty tree", description: "Returns 0 for None.", maxPoints: 2 },
   ],
   hints: [

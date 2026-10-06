@@ -213,7 +213,7 @@ export interface ProviderRequest {
   messages: ProviderMessage[];
   maxOutputTokens: number;
   temperature?: number;
-  reasoningEffort?: "minimal" | "low" | "medium" | "high";
+  reasoningEffort?: "none" | "minimal" | "low" | "medium" | "high";
   structuredOutput?: StructuredOutputSpec;
   timeoutMs: number;
   /** Abort when the client disconnects. */

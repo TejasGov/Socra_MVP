@@ -42,3 +42,6 @@ export const POST = route(async (req) => {
     { status: receipt.duplicate ? 200 : 201 },
   );
 });
+
+// Vercel function limit: long model generations need more than the default.
+export const maxDuration = 60;

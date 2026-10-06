@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec, type Extension } from "@codemirror/state";
@@ -23,6 +23,8 @@ const tokenTheme = EditorView.theme({
     fontFamily: "var(--font-mono, ui-monospace, monospace)",
     lineHeight: "20px",
   },
+  ".cm-line": { lineHeight: "20px" },
+  ".cm-gutterElement": { lineHeight: "20px" },
   ".cm-content": { caretColor: "var(--color-fg, #1b1f1e)", padding: "8px 0" },
   ".cm-gutters": {
     backgroundColor: "var(--color-surface, #ffffff)",
@@ -45,20 +47,20 @@ const tokenTheme = EditorView.theme({
 const highlight = HighlightStyle.define([
   {
     tag: [t.keyword, t.controlKeyword, t.definitionKeyword, t.moduleKeyword],
-    color: "#2f6f68",
+    color: "var(--syntax-keyword)",
     fontWeight: "500",
   },
-  { tag: [t.string, t.special(t.string)], color: "#8a4b0f" },
-  { tag: [t.number, t.bool, t.null], color: "#2b5784" },
-  { tag: [t.comment, t.lineComment, t.blockComment], color: "#6b7371", fontStyle: "italic" },
+  { tag: [t.string, t.special(t.string)], color: "var(--syntax-string)" },
+  { tag: [t.number, t.bool, t.null], color: "var(--syntax-number)" },
+  { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--syntax-comment)", fontStyle: "italic" },
   {
     tag: [t.function(t.variableName), t.function(t.propertyName)],
-    color: "#1b1f1e",
+    color: "var(--syntax-function)",
     fontWeight: "500",
   },
-  { tag: [t.definition(t.variableName)], color: "#1b1f1e" },
-  { tag: [t.typeName, t.className], color: "#2c6a3f" },
-  { tag: [t.operator, t.punctuation], color: "#535b59" },
+  { tag: [t.definition(t.variableName)], color: "var(--syntax-function)" },
+  { tag: [t.typeName, t.className], color: "var(--syntax-type)" },
+  { tag: [t.operator, t.punctuation], color: "var(--syntax-operator)" },
 ]);
 
 function languageExtension(lang: WorkspaceLanguage | null): Extension[] {
@@ -96,6 +98,20 @@ export function CodeEditor({
   height = "360px",
   describedBy,
 }: CodeEditorProps) {
+  const viewRef = useRef<EditorView | null>(null);
+  const [ready, setReady] = useState(false);
+  // CodeMirror skips measuring while the editor is off screen, which leaves the gutter's
+  // line heights stale for wrapped lines. Re-measure whenever it scrolls into view.
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) view.requestMeasure();
+    });
+    io.observe(view.dom);
+    return () => io.disconnect();
+  }, [ready]);
+
   const extensions = useMemo(() => {
     const exts: Extension[] = [
       ...languageExtension(language),
@@ -132,6 +148,13 @@ export function CodeEditor({
       extensions={extensions}
       height={height}
       theme="none"
+      onCreateEditor={(view) => {
+        viewRef.current = view;
+        setReady(true);
+        // Re-measure once web fonts load so line heights and the gutter agree.
+        requestAnimationFrame(() => view.requestMeasure());
+        void document.fonts?.ready.then(() => view.requestMeasure());
+      }}
       readOnly={readOnly}
       editable={!readOnly}
       basicSetup={{

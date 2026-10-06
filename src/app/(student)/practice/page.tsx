@@ -73,6 +73,9 @@ export default async function PracticePage({
                 <TH>Started</TH>
                 <TH numeric>Correct</TH>
                 <TH>Status</TH>
+                <TH>
+                  <span className="relative sr-only">Action</span>
+                </TH>
               </TR>
             </THead>
             <TBody>
@@ -86,12 +89,16 @@ export default async function PracticePage({
                   <TD numeric>
                     {s.correctCount} of {s.itemsServed}
                   </TD>
+                  <TD>{s.status === "ACTIVE" ? "In progress" : "Finished"}</TD>
                   <TD>
                     <Link
                       href={`/practice/${s.id}`}
                       className="text-accent underline-offset-2 hover:underline"
                     >
-                      {s.status === "ACTIVE" ? "Continue session" : "View summary"}
+                      {s.status === "ACTIVE" ? "Continue" : "View summary"}
+                      <span className="relative sr-only">
+                        , {s.course.code} {s.topic?.name ?? "mixed topics"} session
+                      </span>
                     </Link>
                   </TD>
                 </TR>

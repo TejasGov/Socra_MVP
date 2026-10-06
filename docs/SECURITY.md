@@ -221,7 +221,31 @@ out of band so printed output cannot forge a pass.
 
 The `docker-compose.yml` Redis has no password; its port 6390 (and Postgres 5544) is published on `127.0.0.1` only.
 That is acceptable for local development only. The `app` image in the `Dockerfile` does not contain the Docker CLI, so the containerized worker
-cannot launch sandboxes; code execution is currently supported only with the worker on a host that has Docker.
+cannot launch sandboxes; with the `docker` driver, code execution needs the worker on a host that has Docker (the Vercel deployment uses the `vercel-sandbox` driver below instead).
+
+### Vercel Sandbox driver (`CODE_RUNNER_DRIVER=vercel-sandbox`)
+
+Used on the Vercel deployment, which has no Docker. Each run gets a fresh Vercel Sandbox (a Firecracker microVM) that
+is stopped in a `finally` and also has a lifetime cap, so nothing is shared between runs or students.
+
+| Control                                          | Effect                                                                           |
+| ------------------------------------------------ | -------------------------------------------------------------------------------- |
+| One microVM per run, `persistent: false`         | Hardware-virtualized isolation with its own kernel; no filesystem survives the run |
+| `networkPolicy: "deny-all"`                      | No egress at all; DNS fails too (checked by the live integration test)            |
+| No `env` on `Sandbox.create` or `runCommand`     | No app secrets enter the VM. The student process starts under `env -i` with only `PATH`, `HOME`, `LANG` and the Python flags of the Docker image |
+| Student code runs as uid/gid 65534 via `sudo -u` | The VM's default user has passwordless sudo; uid 65534 does not (verified)       |
+| `/opt/socra` root-owned 0755, files 0644         | The student cannot change the bootstrap or harness                               |
+| `payload.json` 0600, owned by the setup user     | Delivered on stdin through a shell redirect; holds code and args only, never expected values |
+| `ulimit -u RUNNER_PIDS_LIMIT`, `ulimit -f` 64 MB | Fork-bomb and file-size limits                                                   |
+| Watchdog, SDK `timeoutMs`, host abort            | Wall-clock limit; the watchdog kills every uid-65534 process, orphaned children included |
+| Host-side output cap                             | The command is aborted once `RUNNER_OUTPUT_LIMIT_BYTES` is exceeded              |
+
+Differences from Docker: there is no per-run memory or CPU quota inside the VM (`RUNNER_MEMORY` and `RUNNER_CPUS` do
+not apply); the bound is the VM itself (1 vCPU, 2 GB). An OOM kill before the deadline still reports
+`MEMORY_LIMIT`. The OIDC token stays in the web process, where the SDK uses it for API calls only. Hidden-test
+expectations never leave the web process; they are compared host-side exactly as with Docker. Residual risk: the
+web function's OIDC token can create sandboxes for the project, so sandbox cost and abuse are bounded by the app's
+own authorization and rate limits on `/api/runs` and by the Vercel plan's sandbox limits.
 
 `CODE_RUNNER_DRIVER=remote` delegates to an HTTP sandbox service (contract in `src/server/runner/remote-runner.ts`).
 The job body contains hidden test expectations, so `REMOTE_RUNNER_URL` must be a trusted TLS endpoint. This driver has not been exercised against a real service.

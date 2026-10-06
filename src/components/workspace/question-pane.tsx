@@ -227,7 +227,7 @@ export function QuestionPane(props: QuestionPaneProps) {
       {isCode ? (
         <>
           <div className="border-border bg-surface overflow-hidden rounded-lg border">
-            <div className="border-border bg-surface-2 flex h-9 items-center justify-between gap-2 border-b px-3">
+            <div className="border-border bg-surface-2 flex min-h-10 flex-wrap items-center justify-between gap-2 border-b px-3 py-1">
               <p className="text-fg-muted truncate text-xs">
                 <span className="text-fg font-mono">
                   {question.language ? LANGUAGE_FILE[question.language] : "main"}
@@ -235,16 +235,30 @@ export function QuestionPane(props: QuestionPaneProps) {
                 {question.language ? ` · ${LANGUAGE_LABELS[question.language]}` : ""}
                 {readOnly ? " · read only" : ""}
               </p>
-              <p id={shortcutId} className="text-fg-subtle hidden text-xs md:block">
-                <kbd className="border-border bg-surface rounded-sm border px-1 font-mono">
-                  Ctrl+Enter
-                </kbd>{" "}
-                runs ·{" "}
-                <kbd className="border-border bg-surface rounded-sm border px-1 font-mono">Esc</kbd>{" "}
-                then{" "}
-                <kbd className="border-border bg-surface rounded-sm border px-1 font-mono">Tab</kbd>{" "}
-                leaves the editor
-              </p>
+              <div role="group" aria-label="Run" className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  data-testid={hidden ? undefined : "run-button"}
+                  onClick={runCode}
+                  disabled={running !== null}
+                  className={buttonClasses("secondary", "md")}
+                >
+                  <Play size={14} strokeWidth={1.75} aria-hidden="true" />
+                  {running === "RUN" ? "Running…" : "Run code"}
+                </button>
+                {hasPublicTests ? (
+                  <button
+                    type="button"
+                    data-testid={hidden ? undefined : "run-tests-button"}
+                    onClick={() => void execute("PUBLIC_TESTS")}
+                    disabled={running !== null}
+                    className={buttonClasses("secondary", "md")}
+                  >
+                    <FlaskConical size={14} strokeWidth={1.75} aria-hidden="true" />
+                    {running === "PUBLIC_TESTS" ? "Running tests…" : "Run public tests"}
+                  </button>
+                ) : null}
+              </div>
             </div>
             <div data-testid={hidden ? undefined : "editor"}>
               <CodeEditor
@@ -258,30 +272,14 @@ export function QuestionPane(props: QuestionPaneProps) {
               />
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              data-testid={hidden ? undefined : "run-button"}
-              onClick={runCode}
-              disabled={running !== null}
-              className={buttonClasses("secondary", "md")}
-            >
-              <Play size={14} strokeWidth={1.75} aria-hidden="true" />
-              {running === "RUN" ? "Running…" : "Run code"}
-            </button>
-            {hasPublicTests ? (
-              <button
-                type="button"
-                data-testid={hidden ? undefined : "run-tests-button"}
-                onClick={() => void execute("PUBLIC_TESTS")}
-                disabled={running !== null}
-                className={buttonClasses("secondary", "md")}
-              >
-                <FlaskConical size={14} strokeWidth={1.75} aria-hidden="true" />
-                {running === "PUBLIC_TESTS" ? "Running tests…" : "Run public tests"}
-              </button>
-            ) : null}
-          </div>
+          <p id={shortcutId} className="text-fg-subtle -mt-2 hidden text-xs md:block">
+            <kbd className="border-border bg-surface rounded-sm border px-1 font-mono">Ctrl+Enter</kbd>{" "}
+            runs ·{" "}
+            <kbd className="border-border bg-surface rounded-sm border px-1 font-mono">Esc</kbd>{" "}
+            then{" "}
+            <kbd className="border-border bg-surface rounded-sm border px-1 font-mono">Tab</kbd>{" "}
+            leaves the editor
+          </p>
           <RunConsole
             tab={tab}
             onTabChange={setTab}

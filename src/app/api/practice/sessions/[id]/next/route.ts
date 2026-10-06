@@ -8,3 +8,6 @@ export const POST = route(async (req, ctx: { params: Promise<{ id: string }> }) 
   const user = await requireUser();
   return json(await nextPracticeItem(user, id));
 });
+
+// Vercel function limit: long model generations need more than the default.
+export const maxDuration = 120;

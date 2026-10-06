@@ -112,6 +112,9 @@ const rawSchema = z.object({
   OPENAI_ECONOMY_MODEL: str("gpt-6-luna"),
   OPENAI_EMBEDDING_MODEL: str("text-embedding-3-small"),
   OPENAI_TIMEOUT_MS: int(30000, 1000),
+  /** Reasoning effort per tier. Supported values differ by model (gpt-6-luna rejects "minimal"); "low" works on both. */
+  OPENAI_REASONING_EFFORT_PROTECTED: z.enum(["none", "minimal", "low", "medium", "high"]).optional().default("low"),
+  OPENAI_REASONING_EFFORT_ECONOMY: z.enum(["none", "minimal", "low", "medium", "high"]).optional().default("low"),
   /** Timeout for long structured generations (assignment/quiz authoring, practice item generation, grading suggestions). */
   OPENAI_LONG_TIMEOUT_MS: int(150000, 1000),
   OPENAI_MAX_RETRIES: int(2, 0),
@@ -143,7 +146,7 @@ const rawSchema = z.object({
   S3_FORCE_PATH_STYLE: bool(false),
 
   // Code runner
-  CODE_RUNNER_DRIVER: z.enum(["docker", "remote"]).optional().default("docker"),
+  CODE_RUNNER_DRIVER: z.enum(["docker", "remote", "vercel-sandbox"]).optional().default("docker"),
   RUNNER_TIMEOUT_MS: int(10000, 500),
   RUNNER_SCALA_TIMEOUT_MS: int(45000, 1000),
   RUNNER_MEMORY: str("256m"),
@@ -161,6 +164,13 @@ const rawSchema = z.object({
   // Worker / outbox
   WORKER_HEALTH_PORT: int(3001, 1),
   OUTBOX_POLL_INTERVAL_MS: int(1000, 100),
+  /**
+   * Serverless hosting (e.g. Vercel) has no long-running worker. When true, mutating API requests drain the
+   * transactional outbox after the response is sent, and refresh aggregates / missing embeddings on a throttle.
+   */
+  INLINE_JOBS: bool(false),
+  /** Show the seeded demo accounts on the login page outside development (demo deployments with synthetic data only). */
+  SHOW_DEMO_ACCOUNTS: bool(false),
   OUTBOX_BATCH_SIZE: int(50, 1),
   OUTBOX_MAX_ATTEMPTS: int(8, 1),
 
@@ -291,6 +301,16 @@ export function parseEnv(raw: Record<string, string | undefined>): Env {
     if (isProd) throw new EnvError("STORAGE_DRIVER=s3 requires S3_BUCKET");
     warnings.push("STORAGE_DRIVER=s3 without S3_BUCKET");
   }
+  if (
+    e.CODE_RUNNER_DRIVER === "vercel-sandbox" &&
+    !process.env.VERCEL &&
+    !process.env.VERCEL_OIDC_TOKEN &&
+    !(process.env.VERCEL_TOKEN && process.env.VERCEL_TEAM_ID && process.env.VERCEL_PROJECT_ID)
+  ) {
+    warnings.push(
+      "CODE_RUNNER_DRIVER=vercel-sandbox without Vercel credentials (VERCEL_OIDC_TOKEN from `vercel env pull`); code runs will report RUNNER_UNAVAILABLE",
+    );
+  }
   if (e.CODE_RUNNER_DRIVER === "remote" && !e.REMOTE_RUNNER_URL) {
     warnings.push(
       "CODE_RUNNER_DRIVER=remote without REMOTE_RUNNER_URL; code runs will report RUNNER_UNAVAILABLE",
@@ -309,7 +329,8 @@ export function parseEnv(raw: Record<string, string | undefined>): Env {
   return {
     ...rest,
     DATABASE_URL: required("DATABASE_URL", DATABASE_URL, DEV_DATABASE_URL),
-    REDIS_URL: required("REDIS_URL", REDIS_URL, DEV_REDIS_URL),
+    // Serverless (INLINE_JOBS) can run without Redis: rate limits and job throttles fall back to per-instance memory.
+    REDIS_URL: e.INLINE_JOBS && !REDIS_URL ? DEV_REDIS_URL : required("REDIS_URL", REDIS_URL, DEV_REDIS_URL),
     SESSION_SECRET: sessionSecret,
     RESEARCH_PSEUDONYM_SECRET: pseudonymSecret,
     AI_MOCK_MODE: aiMockMode,

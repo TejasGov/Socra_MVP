@@ -41,3 +41,6 @@ export const POST = route(async (req, ctx: { params: Promise<{ id: string }> }) 
     }),
   );
 });
+
+// Vercel function limit: long model generations need more than the default.
+export const maxDuration = 60;

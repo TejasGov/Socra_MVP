@@ -15,7 +15,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   sso_failed: "University sign-in failed. Try again.",
 };
 
-/** Seeded accounts (prisma/seed/users.ts). Listed only when NODE_ENV is development. */
+/** Seeded accounts (prisma/seed/users.ts). Listed in development, or on a demo deployment with SHOW_DEMO_ACCOUNTS=true. */
 const DEV_ACCOUNTS: Array<{ email: string; role: string }> = [
   { email: "student1@socra.local", role: "Student, CSE 115 and CSE 116" },
   { email: "student11@socra.local", role: "Student, CSE 115 and CSE 116" },
@@ -36,7 +36,7 @@ export default async function LoginPage({
   const user = await getCurrentUser();
   if (user) redirect(next ? safeNextPath(next) : homePathFor(user));
   const e = env();
-  const isDev = e.NODE_ENV === "development";
+  const isDev = e.NODE_ENV === "development" || e.SHOW_DEMO_ACCOUNTS;
 
   return (
     <main id="main" className="mx-auto w-full max-w-[380px] px-4 pt-20 pb-12">
