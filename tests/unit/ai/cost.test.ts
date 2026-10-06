@@ -35,3 +35,14 @@ describe("cost accounting", () => {
     expect(priceTableFromEnv(parseEnv({})).economy).toEqual(DEFAULT_PRICES.economy);
   });
 });
+
+describe("pricing follows the model that ran", () => {
+  it("bills the protected tier at economy rates when it is routed to the economy model", async () => {
+    const { pricingTierFor } = await import("@/server/ai/gateway");
+    const e = { OPENAI_PROTECTED_MODEL: "luna", OPENAI_ECONOMY_MODEL: "luna", OPENAI_EMBEDDING_MODEL: "emb" };
+    expect(pricingTierFor("protected", "luna", e as never)).toBe("economy");
+    expect(pricingTierFor("protected", "sol", { ...e, OPENAI_PROTECTED_MODEL: "sol" } as never)).toBe("protected");
+    expect(pricingTierFor("embedding", "emb", e as never)).toBe("embedding");
+    expect(pricingTierFor("protected", undefined, e as never)).toBe("protected");
+  });
+});

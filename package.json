@@ -28,7 +28,8 @@
     "db:reset": "prisma migrate reset --force",
     "db:studio": "prisma studio",
     "runner:pull": "node scripts/runner-pull.mjs",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "ai:embed": "tsx --conditions=react-server scripts/backfill-embeddings.ts"
   },
   "dependencies": {
     "@codemirror/lang-javascript": "^6.2.5",

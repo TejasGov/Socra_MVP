@@ -79,6 +79,11 @@ export function buildProviderRequest(
     messages.splice(messages.length - 1, 0, { role: "developer", content: opts.extraInstruction });
   }
   const tier = TASK_TIERS[opts.task];
+  // Whole-artifact generations (a full assignment or quiz, a practice item, a grading suggestion) take far longer
+  // on a reasoning model than a single tutoring turn, so they get their own timeout.
+  const timeoutMs = LONG_GENERATION_TASKS.has(opts.task)
+    ? Math.max(e.OPENAI_TIMEOUT_MS, e.OPENAI_LONG_TIMEOUT_MS)
+    : e.OPENAI_TIMEOUT_MS;
   const request: ProviderRequest = {
     envelope: safe,
     model: modelForTier(tier),
@@ -89,7 +94,7 @@ export function buildProviderRequest(
       ? toStructuredOutputSpec(def.outputHandling.schemaName ?? opts.task, opts.structured)
       : undefined,
     reasoningEffort: tier === "protected" ? "low" : "minimal",
-    timeoutMs: e.OPENAI_TIMEOUT_MS,
+    timeoutMs,
     signal: opts.signal,
   };
   return { request, envelope: safe };
@@ -242,8 +247,26 @@ function dbErrorClass(c: GatewayErrorClass | null): AiErrorClass | null {
   return c === "INVALID_OUTPUT" ? "SCHEMA_VALIDATION" : c;
 }
 
-export function costForUsage(tier: ModelTier, usage: AiUsage, provider: "MOCK" | "OPENAI"): number {
-  const rates = priceTableFromEnv(env())[tier];
+const LONG_GENERATION_TASKS: ReadonlySet<AiTask> = new Set<AiTask>([
+  "authoring_generation",
+  "practice_generation",
+  "grading_suggestion",
+]);
+
+/**
+ * Price by the model that actually ran, not by the routing tier: the protected tier can be pointed at the economy
+ * model (OPENAI_PROTECTED_MODEL=OPENAI_ECONOMY_MODEL) and must then be billed at economy rates.
+ */
+export function pricingTierFor(tier: ModelTier, model: string | undefined, e = env()): ModelTier {
+  if (!model) return tier;
+  if (model === e.OPENAI_EMBEDDING_MODEL) return "embedding";
+  if (model === e.OPENAI_ECONOMY_MODEL) return "economy";
+  if (model === e.OPENAI_PROTECTED_MODEL) return "protected";
+  return tier;
+}
+
+export function costForUsage(tier: ModelTier, usage: AiUsage, provider: "MOCK" | "OPENAI", model?: string): number {
+  const rates = priceTableFromEnv(env())[provider === "OPENAI" ? pricingTierFor(tier, model) : tier];
   // OpenAI output_tokens already include reasoning tokens.
   return computeCostUsd(usage, rates, { reasoningIncludedInOutput: provider === "OPENAI" });
 }
@@ -280,7 +303,7 @@ export async function persistAiRequest(input: PersistAiRequestInput): Promise<st
         cachedTokens: input.usage.cachedTokens,
         outputTokens: input.usage.outputTokens,
         reasoningTokens: input.usage.reasoningTokens,
-        costUsd: costForUsage(input.tier, input.usage, input.provider),
+        costUsd: costForUsage(input.tier, input.usage, input.provider, input.model),
         appVersion: env().APP_VERSION,
         retrievedResourceIds: e.retrievedResources.map((r) => r.resourceId),
         structuredOutputValid: input.structuredOutputValid,
