@@ -10,6 +10,10 @@ import { env } from "./env";
 const globalForRedis = globalThis as unknown as { __socraRedis?: Redis };
 
 export function getRedis(): Redis {
+  if (env().INLINE_JOBS && !process.env.REDIS_URL?.trim()) {
+    // Callers already handle unavailable Redis. Avoid opening a localhost socket on serverless hosts.
+    throw new Error("Redis is not configured; using inline job and rate-limit fallbacks");
+  }
   if (!globalForRedis.__socraRedis) {
     globalForRedis.__socraRedis = new Redis(env().REDIS_URL, {
       // Stop reconnect loops after a few attempts (serverless without Redis); callers already fall back.

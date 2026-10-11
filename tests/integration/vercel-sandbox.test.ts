@@ -53,7 +53,7 @@ describe.skipIf(!enabled)("vercel-sandbox runner (live)", () => {
     setCodeRunnerForTests(undefined);
   });
   afterAll(() => {
-    if (prevDriver === undefined) delete process.env.CODE_RUNNER_DRIVER;
+    if (prevDriver === undefined) Reflect.deleteProperty(process.env, "CODE_RUNNER_DRIVER");
     else process.env.CODE_RUNNER_DRIVER = prevDriver;
     resetEnvCache();
     setCodeRunnerForTests(undefined);

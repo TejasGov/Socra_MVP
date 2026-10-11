@@ -7,6 +7,10 @@ export default defineConfig([
   ...nextTs,
   globalIgnores([
     ".next/**",
+    ".open-next/**",
+    ".wrangler/**",
+    // Temporary deployment bundles and local test caches are not source code.
+    ".data/**",
     "out/**",
     "build/**",
     "worker-dist/**",

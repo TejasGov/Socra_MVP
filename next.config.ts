@@ -51,11 +51,30 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   // Packages that must stay as Node requires on the server (native bindings / dynamic requires).
-  serverExternalPackages: ["pg", "@prisma/adapter-pg", "bullmq", "ioredis", "bcryptjs", "@vercel/sandbox"],
+  serverExternalPackages: [
+    "pg",
+    "@prisma/adapter-pg",
+    "bullmq",
+    "ioredis",
+    "bcryptjs",
+    "@vercel/sandbox",
+  ],
   // The vercel-sandbox runner uploads the same bootstrap/harness files the Docker images bake in; it reads them
   // from disk at run time, so they must be traced into every server function bundle.
   outputFileTracingIncludes: {
-    "/**": ["./docker/runner/bootstrap.py", "./docker/runner/harness.py", "./docker/runner/bootstrap.js", "./docker/runner/harness.js"],
+    "/**": [
+      "./docker/runner/bootstrap.py",
+      "./docker/runner/harness.py",
+      "./docker/runner/bootstrap.js",
+      "./docker/runner/harness.js",
+      // pg loads this socket adapter only inside workerd; Next's Node tracing cannot detect it.
+      "./node_modules/pg-cloudflare/dist/**/*",
+    ],
+  },
+  // Prisma's CLI and development database are build tools, never application dependencies.
+  // Exclude their WASM assets so OpenNext does not package them as Worker modules.
+  outputFileTracingExcludes: {
+    "/**": ["./node_modules/prisma/**/*", "./node_modules/@prisma/dev/**/*"],
   },
   typedRoutes: false,
   async headers() {

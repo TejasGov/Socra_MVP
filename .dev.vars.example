@@ -1,0 +1,10 @@
+# Copy to .dev.vars for `npm run preview:cloudflare`. Never commit real secrets.
+NEXTJS_ENV=production
+DATABASE_URL=postgresql://USER:PASSWORD@HOST/DATABASE?sslmode=require
+SESSION_SECRET=replace-with-at-least-32-random-characters
+RESEARCH_PSEUDONYM_SECRET=replace-with-a-separate-random-secret
+APP_URL=http://localhost:8787
+AI_MOCK_MODE=true
+# Code execution needs an external sandbox service; without it Run reports unavailable.
+REMOTE_RUNNER_URL=
+REMOTE_RUNNER_TOKEN=

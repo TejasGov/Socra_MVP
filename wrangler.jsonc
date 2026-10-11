@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "learn",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-08",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "workers_dev": true,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS",
+  },
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "learn" }],
+  "r2_buckets": [{ "binding": "RESEARCH_EXPORTS", "bucket_name": "socra-pilot-exports" }],
+  "vars": {
+    "INLINE_JOBS": "true",
+    "CODE_RUNNER_DRIVER": "remote",
+    "STORAGE_DRIVER": "r2",
+    "AUTH_LOCAL_ENABLED": "true",
+  },
+  "observability": {
+    "enabled": true,
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 },
+  },
+}

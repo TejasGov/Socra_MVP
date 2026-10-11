@@ -136,7 +136,7 @@ const rawSchema = z.object({
   AI_PRICE_EMBEDDING_PER_1M: num(0.02),
 
   // Storage
-  STORAGE_DRIVER: z.enum(["local", "s3"]).optional().default("local"),
+  STORAGE_DRIVER: z.enum(["local", "s3", "r2"]).optional().default("local"),
   LOCAL_STORAGE_DIR: str("./storage"),
   S3_BUCKET: optStr,
   S3_REGION: optStr,

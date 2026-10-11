@@ -8,6 +8,7 @@ OpenAI key the app uses a deterministic mock AI.
 - Architecture, data planes and diagrams: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Security and the pre-launch checklist: [docs/SECURITY.md](docs/SECURITY.md)
 - What is not done or not verified: [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md)
+- Cloudflare Workers deployment: [docs/CLOUDFLARE.md](docs/CLOUDFLARE.md)
 
 ## Prerequisites
 
